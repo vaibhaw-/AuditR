@@ -1,0 +1,125 @@
+digraph G {
+    graph [splines=ortho, rankdir=TB];
+    node [shape=plaintext, fontname=Helvetica];
+
+    // ---------------------------
+    // Main schema cluster
+    // ---------------------------
+    subgraph cluster_schema {
+        label="Database Schema";
+        color=white;
+
+        // ---------------------------
+        // Healthcare schema
+        // ---------------------------
+        patient [label=<
+          <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0">
+            <TR><TD COLSPAN="2"><B>healthcare.patient</B></TD></TR>
+            <TR><TD>patient_id</TD><TD>UUID (PK)</TD></TR>
+            <TR><TD BGCOLOR="lightblue">ssn</TD><TD BGCOLOR="lightblue">VARCHAR(11)</TD></TR>
+            <TR><TD BGCOLOR="lightblue">first_name</TD><TD BGCOLOR="lightblue">TEXT</TD></TR>
+            <TR><TD BGCOLOR="lightblue">last_name</TD><TD BGCOLOR="lightblue">TEXT</TD></TR>
+            <TR><TD BGCOLOR="lightblue">dob</TD><TD BGCOLOR="lightblue">DATE</TD></TR>
+            <TR><TD BGCOLOR="lightblue">email</TD><TD BGCOLOR="lightblue">CITEXT</TD></TR>
+            <TR><TD BGCOLOR="lightblue">phone_number</TD><TD BGCOLOR="lightblue">TEXT</TD></TR>
+            <TR><TD BGCOLOR="lightblue">address...</TD><TD BGCOLOR="lightblue">TEXT</TD></TR>
+            <TR><TD>created_at</TD><TD>TIMESTAMPTZ</TD></TR>
+            <TR><TD>updated_at</TD><TD>TIMESTAMPTZ</TD></TR>
+          </TABLE>
+        >];
+
+        encounter [label=<
+          <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0">
+            <TR><TD COLSPAN="2"><B>healthcare.encounter</B></TD></TR>
+            <TR><TD>encounter_id</TD><TD>UUID (PK)</TD></TR>
+            <TR><TD>patient_id</TD><TD>UUID (FK)</TD></TR>
+            <TR><TD>encounter_ts</TD><TD>TIMESTAMPTZ</TD></TR>
+            <TR><TD BGCOLOR="lightgreen">diagnosis</TD><TD BGCOLOR="lightgreen">TEXT</TD></TR>
+            <TR><TD BGCOLOR="lightgreen">treatment</TD><TD BGCOLOR="lightgreen">TEXT</TD></TR>
+            <TR><TD BGCOLOR="lightgreen">notes</TD><TD BGCOLOR="lightgreen">TEXT</TD></TR>
+            <TR><TD>provider_name</TD><TD>TEXT</TD></TR>
+          </TABLE>
+        >];
+
+        // ---------------------------
+        // Pharmacy schema
+        // ---------------------------
+        drug [label=<
+          <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0">
+            <TR><TD COLSPAN="2"><B>pharmacy.drug</B></TD></TR>
+            <TR><TD>drug_id</TD><TD>UUID (PK)</TD></TR>
+            <TR><TD>name</TD><TD>TEXT</TD></TR>
+            <TR><TD>dosage_form</TD><TD>TEXT</TD></TR>
+            <TR><TD>strength</TD><TD>TEXT</TD></TR>
+            <TR><TD>manufacturer</TD><TD>TEXT</TD></TR>
+            <TR><TD>price</TD><TD>NUMERIC</TD></TR>
+            <TR><TD>stock_qty</TD><TD>INT</TD></TR>
+          </TABLE>
+        >];
+
+        order [label=<
+          <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0">
+            <TR><TD COLSPAN="2"><B>pharmacy.pharmacy_order</B></TD></TR>
+            <TR><TD>order_id</TD><TD>UUID (PK)</TD></TR>
+            <TR><TD>patient_id</TD><TD>UUID (FK)</TD></TR>
+            <TR><TD>order_ts</TD><TD>TIMESTAMPTZ</TD></TR>
+            <TR><TD>status</TD><TD>TEXT</TD></TR>
+            <TR><TD>total_price</TD><TD>NUMERIC</TD></TR>
+            <TR><TD BGCOLOR="lightblue">shipping_address</TD><TD BGCOLOR="lightblue">TEXT</TD></TR>
+            <TR><TD>payment_method_id</TD><TD>UUID (FK)</TD></TR>
+            <TR><TD>fulfilled_by</TD><TD>UUID</TD></TR>
+          </TABLE>
+        >];
+
+        order_item [label=<
+          <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0">
+            <TR><TD COLSPAN="2"><B>pharmacy.pharmacy_order_item</B></TD></TR>
+            <TR><TD>order_id</TD><TD>UUID (FK)</TD></TR>
+            <TR><TD>drug_id</TD><TD>UUID (FK)</TD></TR>
+            <TR><TD>quantity</TD><TD>INT</TD></TR>
+            <TR><TD>unit_price</TD><TD>NUMERIC</TD></TR>
+          </TABLE>
+        >];
+
+        // ---------------------------
+        // Payments schema
+        // ---------------------------
+        payment_method [label=<
+          <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0">
+            <TR><TD COLSPAN="2"><B>payments.payment_method</B></TD></TR>
+            <TR><TD>payment_method_id</TD><TD>UUID (PK)</TD></TR>
+            <TR><TD>patient_id</TD><TD>UUID (FK)</TD></TR>
+            <TR><TD BGCOLOR="orange">card_network</TD><TD BGCOLOR="orange">TEXT</TD></TR>
+            <TR><TD BGCOLOR="orange">card_last4</TD><TD BGCOLOR="orange">CHAR(4)</TD></TR>
+            <TR><TD BGCOLOR="orange">payment_token</TD><TD BGCOLOR="orange">TEXT</TD></TR>
+            <TR><TD>created_at</TD><TD>TIMESTAMPTZ</TD></TR>
+          </TABLE>
+        >];
+
+        // ---------------------------
+        // Relationships (stable now)
+        // ---------------------------
+        encounter -> patient [label="patient_id"];
+        order -> patient [label="patient_id"];
+        order -> payment_method [label="payment_method_id"];
+        order_item -> order [label="order_id"];
+        order_item -> drug [label="drug_id"];
+        payment_method -> patient [label="patient_id"];
+    }
+
+    // ---------------------------
+    // Legend (anchored at bottom)
+    // ---------------------------
+    legend [shape=plaintext, label=<
+      <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0">
+        <TR><TD COLSPAN="2"><B>Legend</B></TD></TR>
+        <TR><TD BGCOLOR="lightblue">PII</TD><TD>Personally Identifiable Information</TD></TR>
+        <TR><TD BGCOLOR="lightgreen">PHI</TD><TD>Protected Health Information</TD></TR>
+        <TR><TD BGCOLOR="orange">Financial</TD><TD>Payment / Financial Data</TD></TR>
+      </TABLE>
+    >];
+
+    // Invisible anchor to keep legend at bottom
+    schema_anchor [shape=point, style=invis];
+    schema_anchor -> legend [style=invis];
+}

@@ -19,6 +19,27 @@ MySQL 8 with:
 - Percona Audit Log Plugin
 
 # 🚀 LoadR: Data & Workload Generator
+## Database Schema
+
+The database schema models a simplified healthcare, pharmacy, and payments system.  
+It is designed to include realistic **relationships** and **sensitive data types** for workload simulation and auditing.
+
+### Highlights
+- **Healthcare**: Patients and their encounters (PHI + PII).  
+- **Pharmacy**: Drugs, orders, and order items (joins to patients and payments).  
+- **Payments**: Payment methods linked to patients (Financial data).  
+- **Foreign keys** ensure consistency across schemas in both PostgreSQL and MySQL.  
+- **Sensitive fields** are explicitly marked and color-coded in the diagram.
+
+### Sensitivity Legend
+- 🟦 **PII**: Personally Identifiable Information  
+- 🟩 **PHI**: Protected Health Information  
+- 🟧 **Financial**: Payment / Financial Data  
+
+### ER Diagram
+![Schema Diagram](docs/schema.png)
+
+*(SVG version available in `docs/schema.svg` for zoomable detail.)*
 
 ## Data Generation
 ### Data Generation Phase (loadr load)
@@ -203,6 +224,7 @@ Once the workload completes:
     - Likely file path on MacOS Homebrew:
         - **Postgres** : `/opt/homebrew/var/log/postgresql@16.log` 
         - **MySQL** : `/opt/homebrew/var/mysql/audit.log`
+
 # 🔍 AuditR: Audit Log Enricher
 AuditR is a CLI tool that processes database audit logs into tamper-evident, enriched compliance reports.
 
