@@ -1,0 +1,14 @@
+{
+  "base": {
+    "PII": "medium",
+    "PHI": "high",
+    "Financial": "high"
+  },
+  "combinations": {
+    "PII+PHI": "high",
+    "PII+Financial": "critical",
+    "PHI+Financial": "critical",
+    "PII+PHI+Financial": "critical"
+  },
+  "default": "low"
+}

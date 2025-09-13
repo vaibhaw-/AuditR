@@ -1,0 +1,108 @@
+// ============================================================
+// Logical schema for AuditR/LoadR project
+// Note: In PostgreSQL, schemas are real (healthcare, pharmacy, payments).
+// In MySQL, all tables live in a single database and use prefixes
+// (e.g., healthcare_patient, pharmacy_drug, payments_payment_method)
+// to simulate the same schema separation.
+// ============================================================
+
+//////////////////////////////////////////////////
+// Healthcare schema
+//////////////////////////////////////////////////
+
+Table healthcare.patient {
+  patient_id uuid [pk]
+  ssn varchar(11) [unique, not null, note: 'PII']
+  first_name varchar(100) [not null, note: 'PII']
+  last_name varchar(100) [not null, note: 'PII']
+  dob date [not null, note: 'PII']
+  email citext [unique, note: 'PII']
+  phone_number varchar(20) [note: 'PII']
+  address_line1 text [not null, note: 'PII']
+  address_line2 text [note: 'PII']
+  city text [not null, note: 'PII']
+  state text [not null, note: 'PII']
+  postal_code text [not null, note: 'PII']
+  country text [not null, note: 'PII']
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+Table healthcare.encounter {
+  encounter_id uuid [pk]
+  patient_id uuid [ref: > healthcare.patient.patient_id]
+  encounter_ts timestamptz [not null]
+  diagnosis text [not null, note: 'PHI']
+  treatment text [not null, note: 'PHI']
+  provider_name text
+  notes text [note: 'PHI']
+}
+
+Table healthcare.provider {
+  provider_id uuid [pk]
+  name text [not null]
+  specialty text [not null]
+  department text
+  phone_number varchar(20)
+  email varchar(255)
+  active boolean
+}
+
+//////////////////////////////////////////////////
+// Pharmacy schema
+//////////////////////////////////////////////////
+
+Table pharmacy.drug {
+  drug_id uuid [pk]
+  name text [not null]
+  dosage_form text [not null]
+  strength text [not null]
+  manufacturer text [not null]
+  price numeric(12,2) [not null]
+  stock_qty int [not null]
+  active boolean
+}
+
+Table pharmacy.prescription {
+  prescription_id uuid [pk]
+  patient_id uuid [ref: > healthcare.patient.patient_id]
+  provider_id uuid [ref: > healthcare.provider.provider_id]
+  drug_id uuid [ref: > pharmacy.drug.drug_id]
+  dosage_instructions text [not null, note: 'PHI']
+  issued_at timestamptz [not null]
+  refills_remaining int
+}
+
+Table pharmacy.pharmacy_order {
+  order_id uuid [pk]
+  patient_id uuid [ref: > healthcare.patient.patient_id]
+  order_ts timestamptz [not null]
+  status text
+  total_price numeric(12,2) [not null]
+  payment_method_id uuid [ref: > payments.payment_method.payment_method_id, note: 'Financial']
+  shipping_address text [not null, note: 'PII']
+  fulfilled_by uuid [ref: > healthcare.provider.provider_id]
+}
+
+Table pharmacy.pharmacy_order_item {
+  order_id uuid [ref: > pharmacy.pharmacy_order.order_id]
+  drug_id uuid [ref: > pharmacy.drug.drug_id]
+  quantity int [not null]
+  unit_price numeric(12,2) [not null]
+  indexes {
+    (order_id, drug_id) [pk]
+  }
+}
+
+//////////////////////////////////////////////////
+// Payments schema
+//////////////////////////////////////////////////
+
+Table payments.payment_method {
+  payment_method_id uuid [pk]
+  patient_id uuid [ref: > healthcare.patient.patient_id]
+  card_network varchar(20) [not null, note: 'Financial']
+  card_last4 char(4) [not null, note: 'Financial']
+  payment_token char(36) [unique, not null, note: 'Financial']
+  created_at timestamptz
+}

@@ -1,0 +1,41 @@
+# Binaries
+/bin/
+/build/
+/dist/
+/out/
+
+# Go build cache & temp files
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# OS-specific junk
+.DS_Store
+Thumbs.db
+
+# IDE/editor configs
+.idea/
+.vscode/
+*.swp
+
+# Go modules
+/vendor/
+
+# Logs
+*.log
+
+# Generated seed & verification SQL files
+seed_pg.sql
+seed_mysql.sql
+
+# Local config overrides (keep only example YAMLs in repo)
+*.yaml
+!load_pg.yaml
+!load_mysql.yaml
+!run_pg.yaml
+!run_mysql.yaml
+

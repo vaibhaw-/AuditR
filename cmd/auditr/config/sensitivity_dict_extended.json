@@ -1,0 +1,73 @@
+{
+  "PII": [
+    {
+      "regex": "(?i)^ssn$",
+      "expected_types": ["VARCHAR", "CHAR", "TEXT"],
+      "sample_pattern": "^\\d{3}-\\d{2}-\\d{4}$"
+    },
+    {
+      "regex": "(?i)^dob$",
+      "expected_types": ["DATE"],
+      "sample_pattern": ".*"
+    },
+    {
+      "regex": "(?i)^email$",
+      "expected_types": ["VARCHAR", "TEXT"],
+      "sample_pattern": ".+@.+\\..+"
+    },
+    {
+      "regex": "(?i)address",
+      "expected_types": ["VARCHAR", "TEXT"],
+      "sample_pattern": ".*"
+    },
+    {
+      "regex": "(?i)^phone",
+      "expected_types": ["VARCHAR", "TEXT"],
+      "sample_pattern": "^[+\\d][0-9\\- ]{6,}$"
+    }
+  ],
+  "PHI": [
+    {
+      "regex": "(?i)^diagnosis$",
+      "expected_types": ["TEXT"],
+      "sample_pattern": ".*"
+    },
+    {
+      "regex": "(?i)^treatment$",
+      "expected_types": ["TEXT"],
+      "sample_pattern": ".*"
+    },
+    {
+      "regex": "(?i)^dosage_?instructions?$",
+      "expected_types": ["TEXT"],
+      "sample_pattern": ".*"
+    }
+  ],
+  "Financial": [
+    {
+      "regex": "(?i)^card_?last4$",
+      "expected_types": ["CHAR", "VARCHAR"],
+      "sample_pattern": "^\\d{4}$"
+    },
+    {
+      "regex": "(?i)^card_?network$",
+      "expected_types": ["VARCHAR", "TEXT"],
+      "sample_pattern": "^(visa|mastercard|amex|discover)$"
+    },
+    {
+      "regex": "(?i)^payment_?token$",
+      "expected_types": ["CHAR", "UUID", "VARCHAR"],
+      "sample_pattern": "^[a-f0-9\\-]{36}$"
+    }
+  ],
+  "Negative": [
+    {
+      "regex": "(?i)^system_state$",
+      "reason": "Operational state, not PII"
+    },
+    {
+      "regex": "(?i)^contract_address$",
+      "reason": "Blockchain/crypto field, not postal address"
+    }
+  ]
+}
