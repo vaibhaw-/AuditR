@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	loadr "github.com/vaibhaw/AuditR/internal/loadr"
+	loadr "github.com/vaibhaw-/AuditR/internal/loadr"
 )
 
 func main() {

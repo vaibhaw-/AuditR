@@ -1,0 +1,49 @@
+# -----------------------------------------------------------------------------
+# MySQL load simulator config for `loadr run`
+# -----------------------------------------------------------------------------
+# Notes on design trade-offs:
+# - Each worker connects as a random DB user at startup. Queries from that worker
+#   will always appear under the same user. This simplifies connection handling.
+# - There is no explicit QPS throttling. Load is controlled indirectly by the
+#   number of workers (concurrency) and totalOps. If you need pacing, add sleep
+#   logic or reduce concurrency/totalOps.
+# -----------------------------------------------------------------------------
+
+driver: "mysql"           # Database driver
+database: "practicumdb"   # Target database name
+
+# Database users created by loadr load
+users:
+  - username: "appuser1"
+    password: "password1"
+  - username: "appuser2"
+    password: "password2"
+  - username: "appuser3"
+    password: "password3"
+  - username: "appuser4"
+    password: "password4"
+  - username: "appuser5"
+    password: "password5"
+
+seed: 42                  # RNG seed for reproducibility
+runId: "mysql_demo001"    # Run identifier (included in query comments)
+
+concurrency: 5            # Number of workers (goroutines)
+totalOps: 200             # Total operations across all workers
+
+mix:                      # Operation mix
+  select: 0.7             # 70% SELECT queries
+  update: 0.3             # 30% UPDATE queries
+
+sensitivity:              # Sensitivity mix
+  sensitive_only: 0.4     # e.g., SSN, email, card info
+  mixed: 0.4              # e.g., PII + PHI + Financial joins
+  non_sensitive_only: 0.2 # e.g., drug/stock lookups
+
+host: "127.0.0.1"         # Database host
+port: 3306                # MySQL default port
+
+# -----------------------------------------------------------------------------
+# Example run:
+#   go run main.go run --config run_mysql.yaml
+# -----------------------------------------------------------------------------

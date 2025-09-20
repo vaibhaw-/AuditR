@@ -1,0 +1,9 @@
+driver: postgres          # Target database
+database: practicumdb     # Database name to create/use
+output: seed_pg.sql       # Generated SQL file
+seed: 42                  # Random seed for reproducibility
+patients: 1000            # Number of patient rows
+encounters: 2000          # Number of encounters
+drugs: 200                # Number of drugs
+orders: 1500              # Number of pharmacy orders
+dbUsers: 5                # Number of database users to create
