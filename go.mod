@@ -3,6 +3,7 @@ module github.com/vaibhaw-/AuditR
 go 1.25
 
 require (
+	github.com/araddon/dateparse v0.0.0-20210429162001-6b43995a97de
 	github.com/brianvoe/gofakeit/v7 v7.5.1
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/google/uuid v1.6.0

@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/araddon/dateparse"
 	"github.com/vaibhaw-/AuditR/internal/auditr/logger"
 )
 
@@ -339,28 +340,17 @@ func looksLikeSQL(up string) bool {
 	return false
 }
 
-// normalizeTimestamp takes raw timestamp strings and returns RFC3339 UTC form or empty.
-// normalizeTimestamp attempts to parse a raw timestamp string using known layouts and returns RFC3339 UTC format.
-// Returns empty string if parsing fails.
-func normalizeTimestamp(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
+// normalizeTimestamp tries to parse any timestamp string using dateparse.
+// Returns RFC3339Nano UTC format (canonical form for AuditR).
+func normalizeTimestamp(s string) string {
+	if s == "" {
 		return ""
 	}
-	// try layouts
-	for _, layout := range timeLayouts {
-		if t, err := time.Parse(layout, raw); err == nil {
-			return t.UTC().Format(time.RFC3339)
-		}
+	t, err := dateparse.ParseAny(s)
+	if err != nil {
+		return ""
 	}
-	// try to parse a prefix like "2025-09-19 12:00:00"
-	if len(raw) >= 19 {
-		sub := raw[:19]
-		if t, err := time.Parse("2006-01-02 15:04:05", sub); err == nil {
-			return t.UTC().Format(time.RFC3339)
-		}
-	}
-	return ""
+	return t.UTC().Format(time.RFC3339Nano)
 }
 
 // extractTimestampFromLine tries to pull a plausible timestamp prefix and rest of line.
@@ -493,71 +483,6 @@ func extractIPFromLine(line string) string {
 	return ""
 }
 
-// tryParseAuthEvent inspects a log line for connection/disconnection events.
-// tryParseAuthEvent inspects a log line for connection/disconnection events (login, logout, failed login).
-// Returns a structured event map if matched, or nil otherwise.
-// Returns nil if not matched.
-/*
-func tryParseAuthEvent(line string, ts string, emitRaw bool) map[string]interface{} {
-	lower := strings.ToLower(line)
-
-	switch {
-	case strings.Contains(lower, "connection authorized"):
-		evt := map[string]interface{}{
-			"event_id":   uuid.NewString(),
-			"timestamp":  normalizeTimestamp(ts),
-			"db_system":  "postgres",
-			"query_type": "LOGIN_SUCCESS",
-		}
-		if u := extractUserFromLine(line); u != "" {
-			evt["db_user"] = u
-		}
-		if db := extractDBFromLine(line); db != "" {
-			evt["db_name"] = db
-		}
-		if emitRaw {
-			evt["raw_query"] = line
-		}
-		return evt
-
-	case strings.Contains(lower, "connection failed"):
-		evt := map[string]interface{}{
-			"event_id":   uuid.NewString(),
-			"timestamp":  normalizeTimestamp(ts),
-			"db_system":  "postgres",
-			"query_type": "LOGIN_FAILURE",
-		}
-		if u := extractUserFromLine(line); u != "" {
-			evt["db_user"] = u
-		}
-		if emitRaw {
-			evt["raw_query"] = line
-		}
-		return evt
-
-	case strings.Contains(lower, "disconnection"):
-		evt := map[string]interface{}{
-			"event_id":   uuid.NewString(),
-			"timestamp":  normalizeTimestamp(ts),
-			"db_system":  "postgres",
-			"query_type": "LOGOUT",
-		}
-		if u := extractUserFromLine(line); u != "" {
-			evt["db_user"] = u
-		}
-		if db := extractDBFromLine(line); db != "" {
-			evt["db_name"] = db
-		}
-		if emitRaw {
-			evt["raw_query"] = line
-		}
-		return evt
-	}
-
-	return nil
-}
-*/
-
 // parsePgAuditCSV parses the CSV portion of a pgAudit log line using encoding/csv.
 // It returns a map of field name → string, or nil if parsing fails.
 func parsePgAuditCSV(line string) map[string]string {
@@ -592,11 +517,4 @@ func parsePgAuditCSV(line string) map[string]string {
 	}
 
 	return result
-}
-
-func stringPtr(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
 }

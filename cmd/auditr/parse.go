@@ -1,20 +1,16 @@
 package main
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/vaibhaw-/AuditR/internal/auditr/config"
-	"github.com/vaibhaw-/AuditR/internal/auditr/logger"
 	"github.com/vaibhaw-/AuditR/internal/auditr/parsers"
+	"github.com/vaibhaw-/AuditR/internal/auditr/runner"
 )
 
 var parseCmd = &cobra.Command{
@@ -41,7 +37,6 @@ func init() {
 }
 
 func runParse(cmd *cobra.Command, args []string) error {
-	log := logger.L()
 	cfg := config.Get()
 
 	// Input reader
@@ -81,48 +76,10 @@ func runParse(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := context.Background()
-	scanner := bufio.NewScanner(in)
-	enc := json.NewEncoder(out)
 
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		evt, err := p.ParseLine(ctx, line)
-		if err != nil {
-			if errors.Is(err, parsers.ErrSkipLine) {
-				// Emit a structured ERROR event instead of dropping the line
-				raw := line // copy to avoid pointer to loop variable
-				errEvt := &parsers.Event{
-					EventID:   uuid.NewString(),
-					Timestamp: "", // could parse timestamp if partially available
-					DBSystem:  flagDB,
-					DBUser:    nil,
-					DBName:    nil,
-					QueryType: "ERROR",
-					RawQuery:  &raw,
-				}
-				if err := enc.Encode(errEvt); err != nil {
-					log.Errorw("encode error event", "err", err.Error())
-				}
-				continue
-			}
-			// Fatal parse error — stop the run
-			return fmt.Errorf("parse error: %w", err)
-		}
-
-		// evt == nil means skip silently (shouldn’t happen in our design, but just in case)
-		if evt == nil {
-			continue
-		}
-
-		if err := enc.Encode(evt); err != nil {
-			log.Errorw("encode event", "err", err.Error())
-			return err
-		}
+	// Use shared runner
+	if err := runner.RunParse(ctx, p, in, out, flagDB); err != nil {
+		return err
 	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("scan input: %w", err)
-	}
-
 	return nil
 }
