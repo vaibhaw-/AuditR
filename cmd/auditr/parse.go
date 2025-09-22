@@ -20,17 +20,19 @@ var parseCmd = &cobra.Command{
 }
 
 var (
-	flagDB      string
-	flagInput   string
-	flagOutput  string
-	flagFollow  bool
-	flagEmitRaw bool
+	flagDB         string
+	flagInput      string
+	flagOutput     string
+	flagRejectFile string
+	flagFollow     bool
+	flagEmitRaw    bool
 )
 
 func init() {
 	parseCmd.Flags().StringVar(&flagDB, "db", "", "db type: postgres|mysql (required)")
 	parseCmd.Flags().StringVar(&flagInput, "input", "", "input file (default stdin)")
 	parseCmd.Flags().StringVar(&flagOutput, "output", "", "output file (default stdout)")
+	parseCmd.Flags().StringVar(&flagRejectFile, "reject-file", "", "file to store rejected/skipped log entries")
 	parseCmd.Flags().BoolVar(&flagFollow, "follow", false, "follow (tail) input stream")
 	parseCmd.Flags().BoolVar(&flagEmitRaw, "emit-raw", false, "include raw_query in output")
 	parseCmd.MarkFlagRequired("db")
@@ -38,6 +40,11 @@ func init() {
 
 func runParse(cmd *cobra.Command, args []string) error {
 	cfg := config.Get()
+
+	// Override config with command line flags
+	if flagRejectFile != "" {
+		cfg.Output.RejectFile = flagRejectFile
+	}
 
 	// Input reader
 	var in io.Reader
@@ -78,8 +85,9 @@ func runParse(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	// Use shared runner
-	if err := runner.RunParse(ctx, p, in, out, flagDB); err != nil {
+	if err := runner.RunParse(ctx, p, in, out, flagDB, cfg); err != nil {
 		return err
 	}
+
 	return nil
 }

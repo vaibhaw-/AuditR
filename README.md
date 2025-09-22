@@ -236,6 +236,94 @@ AuditR is a CLI tool that processes database audit logs into tamper-evident, enr
 * Support schema dump (--schema) or live read-only DB (--db-uri)
 * Tamper-evidence using SHA-256 hash chaining
 * Query/filter logs for compliance reporting (e.g., "all PII access in last 7 days")
+* Comprehensive logging with configurable output and debug levels
+
+## Logging Configuration
+
+AuditR provides flexible logging configuration to help with debugging and monitoring:
+
+### Log Levels
+
+* **debug**: Detailed information for troubleshooting
+* **info**: General operational information (default)
+* **warn**: Warning conditions
+* **error**: Error conditions that should be investigated
+
+### Log Outputs
+
+* **Console**: Always enabled, with configurable minimum level
+* **Debug File**: Optional JSON file for all debug and above logs
+* **Info File**: Optional JSON file for info and above logs
+* **Run Log**: Append-only JSONL file for run summaries
+
+### Example Configuration
+
+```yaml
+logging:
+  # Minimum log level for all outputs
+  level: "info"
+  # Minimum level for console output (can be higher than file level)
+  console_level: "info"
+  # Debug log file (optional) - includes all debug level and above logs
+  debug_file: "./logs/debug.jsonl"
+  # Info log file (optional) - includes all info level and above logs
+  info_file: "./logs/info.jsonl"
+  # Run summary log file - append-only JSONL
+  run_log: "./logs/run_log.jsonl"
+  # Development mode enables more verbose output
+  development: true
+```
+
+### Debug Features
+
+When troubleshooting, you can enable debug logging to see:
+
+* **Parser Details**:
+  - SQL query extraction and classification
+  - Bulk operation detection
+  - Authentication events
+  - Parsing decisions and context
+
+* **Processing Stats**:
+  - Progress updates every 1000 lines
+  - Lines processed per second
+  - Parse success/reject ratios
+  - Run duration and summary
+
+* **File Operations**:
+  - Input/output file handling
+  - Reject file operations
+  - Run log updates
+
+### Example Debug Output
+
+```
+2025-09-22T10:00:00.000Z DEBUG attempting SQL extraction {"line_length": 256}
+2025-09-22T10:00:00.001Z DEBUG found potential SQL matches {"count": 1}
+2025-09-22T10:00:00.001Z DEBUG checking SQL candidate {"index": 0, "candidate": "SELECT * FROM patients", "looks_like_sql": true}
+2025-09-22T10:00:00.002Z DEBUG checking for bulk operation {"query": "SELECT * FROM patients"}
+2025-09-22T10:00:00.002Z DEBUG checking SELECT for full table read {"has_where": false}
+2025-09-22T10:00:00.002Z DEBUG detected full table SELECT
+2025-09-22T10:00:00.003Z DEBUG successfully parsed event {"event_id": "abc-123", "query_type": "SELECT", "db_user": "alice"}
+```
+
+### Recommended Usage
+
+1. For normal operation:
+   ```yaml
+   level: "info"
+   console_level: "info"
+   run_log: "./logs/run_log.jsonl"
+   ```
+
+2. For troubleshooting:
+   ```yaml
+   level: "debug"
+   console_level: "info"  # Keep console clean
+   debug_file: "./logs/debug.jsonl"
+   info_file: "./logs/info.jsonl"
+   development: true
+   ```
 
 ## CLI Overview
 ## Enrichment Example

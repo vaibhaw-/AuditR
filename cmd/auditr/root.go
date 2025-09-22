@@ -37,8 +37,15 @@ var (
 			}
 
 			// init logger
-			if err := logger.InitLogger(config.Get().Logging.Level); err != nil {
-				return err
+			cfg := config.Get()
+			if err := logger.InitLogger(logger.LogConfig{
+				Level:        cfg.Logging.Level,
+				ConsoleLevel: cfg.Logging.ConsoleLevel,
+				DebugFile:    cfg.Logging.DebugFile,
+				InfoFile:     cfg.Logging.InfoFile,
+				Development:  cfg.Logging.Development,
+			}); err != nil {
+				return fmt.Errorf("init logger: %w", err)
 			}
 			return nil
 		},

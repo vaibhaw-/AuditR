@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/araddon/dateparse"
 	"github.com/vaibhaw-/AuditR/internal/auditr/logger"
 )
 
@@ -72,10 +71,19 @@ func (p *PostgresParser) ParseLine(ctx context.Context, line string) (*Event, er
 		return nil, ErrSkipLine
 	}
 
+	// NOTE:
+	// pgAudit does not natively emit JSON audit events — it only writes CSV-style lines
+	// into the PostgreSQL log. This call is commented out to avoid wasting CPU cycles
+	// on JSON parsing attempts that will never succeed in current pgAudit versions.
+	//
+	// The function parseJSONLine is kept in the codebase for potential future use,
+	// e.g., if logs are preprocessed into JSON by a collector, or if pgAudit ever
+	// adds a native JSON output mode.
+	//
 	// Try JSON branch first
-	if evt, err := p.parseJSONLine(line); err == nil && evt != nil {
-		return evt, nil
-	}
+	// if evt, err := p.parseJSONLine(line); err == nil && evt != nil {
+	// 	return evt, nil
+	// }
 
 	// Fallback: text/pgAudit branch
 	return p.parseTextLine(line)
@@ -122,15 +130,34 @@ func (p *PostgresParser) parseJSONLine(line string) (*Event, error) {
 }
 
 // parseTextLine handles pgAudit text-format audit logs.
+// It supports both standard PostgreSQL log lines and pgAudit-specific CSV format.
+// The function follows this process:
+// 1. Extract timestamp and normalize line
+// 2. Check for authentication events (login/logout)
+// 3. Extract SQL query from log line
+// 4. Parse pgAudit CSV fields if present
+// 5. Detect bulk operations and enrich event
 func (p *PostgresParser) parseTextLine(line string) (*Event, error) {
 	log := logger.L()
 
-	ts, _ := extractTimestampFromLine(line)
+	// Extract timestamp and normalize line
+	ts, rest := extractTimestampFromLine(line)
+	if ts != "" {
+		log.Debugw("extracted timestamp",
+			"timestamp", ts,
+			"remainder", rest)
+	}
 	lower := strings.ToLower(line)
 
 	// --- Auth events ---
+	// Check for authentication-related events first as they have a different format
+	// than regular SQL queries. These include:
+	// - Successful logins ("connection authorized")
+	// - Failed logins ("connection failed")
+	// - Logouts ("disconnection")
 	switch {
 	case strings.Contains(lower, "connection authorized"):
+		log.Debugw("found login success event", "line", line)
 		evt := &Event{
 			EventID:   uuid.NewString(),
 			DBSystem:  "postgres",
@@ -139,9 +166,11 @@ func (p *PostgresParser) parseTextLine(line string) (*Event, error) {
 		}
 		if u := extractUserFromLine(line); u != "" {
 			evt.DBUser = ptrString(u)
+			log.Debugw("extracted user from login", "user", u)
 		}
 		if db := extractDBFromLine(line); db != "" {
 			evt.DBName = ptrString(db)
+			log.Debugw("extracted database from login", "database", db)
 		}
 		if p.opts.EmitRaw {
 			evt.RawQuery = ptrString(line)
@@ -149,6 +178,7 @@ func (p *PostgresParser) parseTextLine(line string) (*Event, error) {
 		return evt, nil
 
 	case strings.Contains(lower, "connection failed"):
+		log.Debugw("found login failure event", "line", line)
 		evt := &Event{
 			EventID:   uuid.NewString(),
 			DBSystem:  "postgres",
@@ -157,6 +187,7 @@ func (p *PostgresParser) parseTextLine(line string) (*Event, error) {
 		}
 		if u := extractUserFromLine(line); u != "" {
 			evt.DBUser = ptrString(u)
+			log.Debugw("extracted user from failed login", "user", u)
 		}
 		if p.opts.EmitRaw {
 			evt.RawQuery = ptrString(line)
@@ -164,6 +195,7 @@ func (p *PostgresParser) parseTextLine(line string) (*Event, error) {
 		return evt, nil
 
 	case strings.Contains(lower, "disconnection"):
+		log.Debugw("found logout event", "line", line)
 		evt := &Event{
 			EventID:   uuid.NewString(),
 			DBSystem:  "postgres",
@@ -172,9 +204,11 @@ func (p *PostgresParser) parseTextLine(line string) (*Event, error) {
 		}
 		if u := extractUserFromLine(line); u != "" {
 			evt.DBUser = ptrString(u)
+			log.Debugw("extracted user from logout", "user", u)
 		}
 		if db := extractDBFromLine(line); db != "" {
 			evt.DBName = ptrString(db)
+			log.Debugw("extracted database from logout", "database", db)
 		}
 		if p.opts.EmitRaw {
 			evt.RawQuery = ptrString(line)
@@ -183,25 +217,48 @@ func (p *PostgresParser) parseTextLine(line string) (*Event, error) {
 	}
 
 	// --- SQL extraction ---
+	// Extract SQL query from the log line. We try two methods:
+	// 1. Look for quoted SQL in pgAudit CSV format
+	// 2. Look for SQL after "statement:" in regular Postgres logs
 	q := ""
+	log.Debugw("attempting SQL extraction", "line", line)
+
+	// Try pgAudit CSV format first (quoted SQL)
 	if matches := pgAuditQueryRe.FindAllStringSubmatch(line, -1); len(matches) > 0 {
+		log.Debugw("found potential SQL matches", "count", len(matches))
 		for i := len(matches) - 1; i >= 0; i-- {
 			candidate := strings.TrimSpace(matches[i][1])
+			candidate = strings.Trim(candidate, `"`) // strip surrounding quotes if present
+			log.Debugw("checking SQL candidate",
+				"index", i,
+				"candidate", candidate,
+				"looks_like_sql", looksLikeSQL(strings.ToUpper(candidate)))
 			if looksLikeSQL(strings.ToUpper(candidate)) {
 				q = candidate
+				log.Debugw("found valid SQL", "query", q)
 				break
 			}
 		}
 	}
+
+	// If no SQL found in quotes, try "statement:" prefix
 	if q == "" {
 		if idx := strings.Index(lower, "statement:"); idx >= 0 {
+			log.Debugw("found statement prefix", "position", idx)
 			after := strings.TrimSpace(line[idx+len("statement:"):])
+			after = strings.Trim(after, `"`) // strip quotes
 			after = strings.Trim(after, "\"")
+			log.Debugw("checking statement candidate",
+				"candidate", after,
+				"looks_like_sql", looksLikeSQL(strings.ToUpper(after)))
 			if looksLikeSQL(strings.ToUpper(after)) {
 				q = after
+				log.Debugw("found valid SQL after statement:", "query", q)
 			}
 		}
 	}
+
+	// No SQL found - skip this line
 	if q == "" {
 		log.Debugw("no SQL query found in line; skipping", "line", line)
 		return nil, ErrSkipLine
@@ -227,6 +284,11 @@ func (p *PostgresParser) parseTextLine(line string) (*Event, error) {
 		evt.RawQuery = ptrString(q)
 	}
 
+	// Check for bulk operations
+	if enrichment := detectBulkOperation(q); enrichment != nil {
+		evt.Enrichment = enrichment
+	}
+
 	// --- CSV parsing for pgAudit structured fields ---
 	if extra := parsePgAuditCSV(line); extra != nil {
 		if v := extra["audit_class"]; v != "" {
@@ -247,110 +309,25 @@ func (p *PostgresParser) parseTextLine(line string) (*Event, error) {
 		}
 		if v := extra["statement_type"]; v != "" {
 			evt.StatementType = ptrString(v)
-			if !strings.EqualFold(v, evt.QueryType) {
+			if !strings.EqualFold(normalizeStmtType(v), evt.QueryType) {
 				logger.L().Warnw("statement_type mismatch",
 					"csv", v, "detected", evt.QueryType, "line", line)
 			}
 		}
+		// --- Meta parity: stash extra fields ---
+		meta := map[string]interface{}{}
+		if v := extra["object_type"]; v != "" {
+			meta["object_type"] = v
+		}
+		if v := extra["object_name"]; v != "" {
+			meta["object_name"] = v
+		}
+		if len(meta) > 0 {
+			evt.Meta = meta
+		}
 	}
 
 	return evt, nil
-}
-
-// ptrString returns a *string or nil for empty input.
-func ptrString(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-func detectQueryType(query string) string {
-	s := strings.TrimSpace(query)
-	if s == "" {
-		return "ANON"
-	}
-	sUp := strings.ToUpper(s)
-
-	switch {
-	// Transaction boundaries
-	case strings.HasPrefix(sUp, "BEGIN"), strings.HasPrefix(sUp, "START TRANSACTION"):
-		return "TX_BEGIN"
-	case strings.HasPrefix(sUp, "COMMIT"):
-		return "TX_COMMIT"
-	case strings.HasPrefix(sUp, "ROLLBACK"):
-		return "TX_ROLLBACK"
-
-	// DML
-	case strings.HasPrefix(sUp, "SELECT"):
-		return "SELECT"
-	case strings.HasPrefix(sUp, "INSERT"):
-		return "INSERT"
-	case strings.HasPrefix(sUp, "UPDATE"):
-		return "UPDATE"
-	case strings.HasPrefix(sUp, "DELETE"):
-		return "DELETE"
-
-	// DDL
-	case strings.HasPrefix(sUp, "CREATE"):
-		return "CREATE"
-	case strings.HasPrefix(sUp, "ALTER"):
-		return "ALTER"
-	case strings.HasPrefix(sUp, "DROP"):
-		return "DROP"
-
-	// Privileges
-	case strings.HasPrefix(sUp, "GRANT"):
-		return "GRANT"
-	case strings.HasPrefix(sUp, "REVOKE"):
-		return "REVOKE"
-
-	// Bulk ops
-	case strings.HasPrefix(sUp, "COPY"):
-		return "COPY"
-	case strings.Contains(sUp, "INTO OUTFILE"):
-		return "SELECT_INTO_OUTFILE"
-	case strings.HasPrefix(sUp, "LOAD DATA"):
-		return "LOAD_DATA"
-
-	// Session settings, sometimes important
-	case strings.HasPrefix(sUp, "SET"):
-		return "SET"
-
-	default:
-		return "ANON"
-	}
-}
-
-// looksLikeSQL is a heuristic to determine whether candidate text appears SQL-like.
-// looksLikeSQL heuristically determines whether a string appears to be a SQL statement.
-// Used to avoid false positives when extracting queries from log lines.
-func looksLikeSQL(up string) bool {
-	// check common SQL starters
-	starters := []string{"SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP", "BEGIN", "COMMIT", "ROLLBACK", "COPY", "GRANT", "REVOKE", "SET"}
-	for _, s := range starters {
-		if strings.HasPrefix(up, s) {
-			return true
-		}
-	}
-	// fallback: contains FROM or INTO or VALUES
-	if strings.Contains(up, " FROM ") || strings.Contains(up, " INTO ") || strings.Contains(up, " VALUES ") {
-		return true
-	}
-	return false
-}
-
-// normalizeTimestamp tries to parse any timestamp string using dateparse.
-// Returns RFC3339Nano UTC format (canonical form for AuditR).
-func normalizeTimestamp(s string) string {
-	if s == "" {
-		return ""
-	}
-	t, err := dateparse.ParseAny(s)
-	if err != nil {
-		return ""
-	}
-	return t.UTC().Format(time.RFC3339Nano)
 }
 
 // extractTimestampFromLine tries to pull a plausible timestamp prefix and rest of line.
@@ -386,7 +363,6 @@ func min(a, b int) int {
 	return b
 }
 
-// extractQueryFromJSON tries to find a SQL string in JSON-structured logs.
 // extractQueryFromJSON tries to find a SQL string in JSON-structured logs.
 // Looks for common keys like 'query', 'statement', 'sql', etc.
 func extractQueryFromJSON(j map[string]interface{}) string {
@@ -481,6 +457,91 @@ func extractIPFromLine(line string) string {
 		return m
 	}
 	return ""
+}
+
+// detectBulkOperation checks if a query is a bulk operation and returns enrichment info.
+// It looks for several patterns that indicate bulk data operations:
+// - COPY TO/FROM: PostgreSQL's native bulk data transfer
+// - SELECT INTO OUTFILE/DUMPFILE: MySQL-style data export
+// - Multi-row INSERT: Multiple VALUES clauses or multiple value sets
+// - Full table SELECT: SELECT without WHERE clause
+func detectBulkOperation(query string) map[string]interface{} {
+	log := logger.L()
+	up := strings.ToUpper(query)
+
+	log.Debugw("checking for bulk operation", "query", query)
+
+	// COPY operations
+	if strings.Contains(up, "COPY") {
+		log.Debugw("found COPY operation")
+		if strings.Contains(up, "TO") {
+			log.Debugw("detected COPY TO (export)")
+			return map[string]interface{}{
+				"bulk_operation":  true,
+				"bulk_type":       "export",
+				"full_table_read": true,
+			}
+		}
+		if strings.Contains(up, "FROM") {
+			log.Debugw("detected COPY FROM (import)")
+			return map[string]interface{}{
+				"bulk_operation": true,
+				"bulk_type":      "import",
+			}
+		}
+	}
+
+	// SELECT INTO OUTFILE
+	if strings.Contains(up, "INTO OUTFILE") || strings.Contains(up, "INTO DUMPFILE") {
+		log.Debugw("detected SELECT INTO OUTFILE/DUMPFILE")
+		return map[string]interface{}{
+			"bulk_operation":  true,
+			"bulk_type":       "export",
+			"full_table_read": true,
+		}
+	}
+
+	// Multi-row INSERT
+	if strings.HasPrefix(up, "INSERT") && strings.Contains(up, "VALUES") {
+		// Check for multiple value sets
+		valuesCount := strings.Count(up, "VALUES")
+		commaCount := strings.Count(up, ",")
+		hasMultipleValueSets := strings.Contains(up, "),(")
+		isMultiRow := hasMultipleValueSets || valuesCount > 1 || commaCount > valuesCount*2
+
+		log.Debugw("checking INSERT for bulk operation",
+			"values_count", valuesCount,
+			"comma_count", commaCount,
+			"has_multiple_value_sets", hasMultipleValueSets,
+			"is_multi_row", isMultiRow)
+
+		if isMultiRow {
+			log.Debugw("detected multi-row INSERT")
+			return map[string]interface{}{
+				"bulk_operation": true,
+				"bulk_type":      "insert",
+			}
+		}
+	}
+
+	// Full table SELECT
+	if strings.HasPrefix(up, "SELECT") {
+		hasWhere := strings.Contains(up, "WHERE")
+		log.Debugw("checking SELECT for full table read",
+			"has_where", hasWhere)
+
+		if !hasWhere {
+			log.Debugw("detected full table SELECT")
+			return map[string]interface{}{
+				"bulk_operation":  true,
+				"bulk_type":       "export",
+				"full_table_read": true,
+			}
+		}
+	}
+
+	log.Debugw("no bulk operation detected")
+	return nil
 }
 
 // parsePgAuditCSV parses the CSV portion of a pgAudit log line using encoding/csv.

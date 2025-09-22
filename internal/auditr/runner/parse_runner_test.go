@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/vaibhaw-/AuditR/internal/auditr/config"
 	"github.com/vaibhaw-/AuditR/internal/auditr/parsers"
 )
 
@@ -28,6 +30,21 @@ func (f *fakeParser) ParseLine(ctx context.Context, line string) (*parsers.Event
 	item := f.lines[f.i]
 	f.i++
 	return item.event, item.err
+}
+
+// createTempFile creates a temporary file and returns its path and a cleanup function
+func createTempFile(t *testing.T, prefix string) (string, func()) {
+	t.Helper()
+	dir := t.TempDir()
+	f, err := os.CreateTemp(dir, prefix)
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	path := f.Name()
+	f.Close()
+	return path, func() {
+		os.Remove(path)
+	}
 }
 
 // decodeEvents decodes NDJSON output into []*parsers.Event
@@ -57,8 +74,13 @@ func TestRunParse_NormalEvent(t *testing.T) {
 		event *parsers.Event
 		err   error
 	}{{event: evt, err: nil}}}
+	cfg := &config.Config{
+		Logging: config.LoggingCfg{
+			RunLog: "", // leave empty so no file is created during tests
+		},
+	}
 
-	if err := RunParse(context.Background(), parser, in, &out, "postgres"); err != nil {
+	if err := RunParse(context.Background(), parser, in, &out, "postgres", cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -83,7 +105,14 @@ func TestRunParse_SkipLine(t *testing.T) {
 		err   error
 	}{{event: nil, err: parsers.ErrSkipLine}}}
 
-	if err := RunParse(context.Background(), parser, in, &out, "postgres"); err != nil {
+	// Test without reject file first
+	cfg := &config.Config{
+		Logging: config.LoggingCfg{
+			RunLog: "", // leave empty so no file is created during tests
+		},
+	}
+
+	if err := RunParse(context.Background(), parser, in, &out, "postgres", cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -91,11 +120,53 @@ func TestRunParse_SkipLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode error: %v", err)
 	}
-	if events[0].QueryType != "SKIP" {
-		t.Errorf("expected SKIP, got %s", events[0].QueryType)
+	if len(events) != 0 {
+		t.Errorf("expected no events in main output, got %d", len(events))
 	}
-	if events[0].Timestamp == "" {
-		t.Errorf("expected non-empty timestamp for SKIP event")
+
+	// Reset and test with reject file
+	rejectPath, cleanup := createTempFile(t, "reject-*.jsonl")
+	defer cleanup()
+
+	in = strings.NewReader("NOISE LINE\n")
+	out.Reset()
+	parser.i = 0 // reset parser state
+	cfg.Output.RejectFile = rejectPath
+
+	if err := RunParse(context.Background(), parser, in, &out, "postgres", cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Main output should be empty
+	events, err = decodeEvents(out)
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("expected no events in main output with reject file, got %d", len(events))
+	}
+
+	// Read reject file
+	rejectData, err := os.ReadFile(rejectPath)
+	if err != nil {
+		t.Fatalf("failed to read reject file: %v", err)
+	}
+	rejectBuf := bytes.Buffer{}
+	rejectBuf.Write(rejectData)
+	rejectEvents, err := decodeEvents(rejectBuf)
+	if err != nil {
+		t.Fatalf("decode reject file error: %v", err)
+	}
+
+	// Verify reject file contents
+	if len(rejectEvents) != 1 {
+		t.Fatalf("expected 1 event in reject file, got %d", len(rejectEvents))
+	}
+	if rejectEvents[0].QueryType != "SKIP" {
+		t.Errorf("expected SKIP in reject file, got %s", rejectEvents[0].QueryType)
+	}
+	if rejectEvents[0].Timestamp == "" {
+		t.Errorf("expected non-empty timestamp for SKIP event in reject file")
 	}
 }
 
@@ -108,7 +179,13 @@ func TestRunParse_ParseError(t *testing.T) {
 		err   error
 	}{{event: nil, err: errors.New("boom")}}}
 
-	err := RunParse(context.Background(), parser, in, &out, "postgres")
+	cfg := &config.Config{
+		Logging: config.LoggingCfg{
+			RunLog: "", // leave empty so no file is created during tests
+		},
+	}
+
+	err := RunParse(context.Background(), parser, in, &out, "postgres", cfg)
 	if err == nil {
 		t.Fatalf("expected fatal error, got nil")
 	}
@@ -131,7 +208,13 @@ func TestRunParse_NilEvent(t *testing.T) {
 		err   error
 	}{{event: nil, err: nil}}} // simulate unexpected nil event
 
-	if err := RunParse(context.Background(), parser, in, &out, "postgres"); err != nil {
+	cfg := &config.Config{
+		Logging: config.LoggingCfg{
+			RunLog: "", // leave empty so no file is created during tests
+		},
+	}
+
+	if err := RunParse(context.Background(), parser, in, &out, "postgres", cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 

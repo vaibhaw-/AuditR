@@ -6,14 +6,14 @@ type Event struct {
 	EventID   string  `json:"event_id"`
 	Timestamp string  `json:"timestamp,omitempty"` // RFC3339 UTC
 	DBSystem  string  `json:"db_system"`
-	DBUser    *string `json:"db_user"`             // null if unknown
-	DBName    *string `json:"db_name"`             // null if unknown
+	DBUser    *string `json:"db_user,omitempty"`   // null if unknown
+	DBName    *string `json:"db_name,omitempty"`   // null if unknown
 	ClientIP  *string `json:"client_ip,omitempty"` // optional
 
 	QueryType string  `json:"query_type"`
 	RawQuery  *string `json:"raw_query,omitempty"` // only if EmitRaw enabled
 
-	// pgAudit-specific structured fields
+	// pgAudit-specific structured fields (optional, populated only for Postgres)
 	AuditClass    *string `json:"audit_class,omitempty"`
 	SessionID     *int    `json:"session_id,omitempty"`
 	CommandID     *int    `json:"command_id,omitempty"`
@@ -22,7 +22,14 @@ type Event struct {
 	ObjectType    *string `json:"object_type,omitempty"`
 	ObjectName    *string `json:"object_name,omitempty"`
 
-	// Future extensions (enrichment step)
-	// Sensitivity []string          `json:"sensitivity,omitempty"`
-	// RiskLevel   *string           `json:"risk_level,omitempty"`
+	// Percona/MySQL-specific structured fields (optional, populated only for MySQL)
+	ConnectionID *int `json:"connection_id,omitempty"`
+	Status       *int `json:"status,omitempty"`
+
+	// Enrichment (bulk operation flags, sensitivity, risk, etc.)
+	Enrichment map[string]interface{} `json:"enrichment,omitempty"`
+
+	// DB-specific extras that don't warrant a first-class field.
+	// Examples: Percona "record" ID, "name"; future DB plugin extras.
+	Meta map[string]interface{} `json:"meta,omitempty"`
 }
