@@ -58,6 +58,7 @@ func init() {
 	// add subcommands
 	rootCmd.AddCommand(parseCmd)
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(dictCmd)
 	// other commands (enrich, verify, etc.) to be added similarly
 }
 
