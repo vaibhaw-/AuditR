@@ -169,6 +169,97 @@ func TestPostgresParser_ParseLine(t *testing.T) {
 			wantDB:   nil,
 			wantErr:  false,
 		},
+		// Test cases for unquoted SQL in pgAudit CSV (fixes regression where these were skipped)
+		{
+			name:     "Unquoted CREATE EXTENSION in pgAudit CSV",
+			line:     `2025-09-07 12:59:28.420 IST [8997] LOG:  AUDIT: SESSION,1,1,DDL,CREATE EXTENSION,,,CREATE EXTENSION pgaudit;,<not logged>`,
+			emitRaw:  true,
+			wantType: "CREATE",
+			wantUser: nil,
+			wantDB:   nil,
+			wantErr:  false,
+		},
+		{
+			name:     "Unquoted SHOW statement in pgAudit CSV",
+			line:     `2025-09-07 13:00:11.342 IST [8997] LOG:  AUDIT: SESSION,2,1,MISC,SHOW,,,SHOW shared_preload_libraries;,<not logged>`,
+			emitRaw:  true,
+			wantType: "SHOW",
+			wantUser: nil,
+			wantDB:   nil,
+			wantErr:  false,
+		},
+		{
+			name:     "Unquoted SELECT with COUNT in pgAudit CSV",
+			line:     `2025-09-13 14:51:18.070 IST [8675] LOG:  AUDIT: SESSION,2,1,READ,SELECT,,,SELECT COUNT(*) FROM healthcare.patient;,<not logged>`,
+			emitRaw:  true,
+			wantType: "SELECT",
+			wantUser: nil,
+			wantDB:   nil,
+			wantErr:  false,
+		},
+		{
+			name:     "Unquoted CREATE ROLE in pgAudit CSV",
+			line:     `2025-09-07 13:00:42.038 IST [8997] LOG:  AUDIT: SESSION,3,1,ROLE,CREATE ROLE,,,CREATE ROLE auditor LOGIN;,<not logged>`,
+			emitRaw:  true,
+			wantType: "CREATE",
+			wantUser: nil,
+			wantDB:   nil,
+			wantErr:  false,
+		},
+		{
+			name:     "Unquoted DROP ROLE in pgAudit CSV",
+			line:     `2025-09-07 13:00:42.042 IST [8997] LOG:  AUDIT: SESSION,4,1,ROLE,DROP ROLE,,,DROP ROLE auditor;,<not logged>`,
+			emitRaw:  true,
+			wantType: "DROP",
+			wantUser: nil,
+			wantDB:   nil,
+			wantErr:  false,
+		},
+		{
+			name:     "Unquoted CREATE DATABASE in pgAudit CSV",
+			line:     `2025-09-13 14:18:18.531 IST [8118] LOG:  AUDIT: SESSION,2,1,DDL,CREATE DATABASE,,,CREATE DATABASE practicumdb;,<not logged>`,
+			emitRaw:  true,
+			wantType: "CREATE",
+			wantUser: nil,
+			wantDB:   nil,
+			wantErr:  false,
+		},
+		{
+			name:     "Unquoted DROP SCHEMA in pgAudit CSV",
+			line:     `2025-09-13 14:27:02.069 IST [8184] LOG:  AUDIT: SESSION,1,1,DDL,DROP SCHEMA,,,DROP SCHEMA IF EXISTS healthcare CASCADE;,<not logged>`,
+			emitRaw:  true,
+			wantType: "DROP",
+			wantUser: nil,
+			wantDB:   nil,
+			wantErr:  false,
+		},
+		{
+			name:     "Mixed format: quoted SQL with comment prefix (already working)",
+			line:     `2025-09-13 15:55:03.428 IST [9307] LOG:  AUDIT: SESSION,6,1,WRITE,UPDATE,,,"/* run_id=pg_demo001 op=update sensitivity=mixed user=appuser4 ts=2025-09-13T10:25:03Z */ UPDATE pharmacy.pharmacy_order SET status=$1, total_price=$2 WHERE order_id=$3",<not logged>`,
+			emitRaw:  true,
+			wantType: "UPDATE",
+			wantUser: nil,
+			wantDB:   nil,
+			wantErr:  false,
+		},
+		{
+			name:     "Unquoted DO block in pgAudit CSV",
+			line:     `2025-09-13 14:27:02.090 IST [8184] LOG:  AUDIT: SESSION,8,1,FUNCTION,DO,,,DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'appuser1') THEN CREATE ROLE appuser1 LOGIN PASSWORD 'password1'; END IF; END$$;,<not logged>`,
+			emitRaw:  true,
+			wantType: "EXEC", // DO blocks are classified as EXEC
+			wantUser: nil,
+			wantDB:   nil,
+			wantErr:  false,
+		},
+		{
+			name:     "pgAudit CSV with empty fields and unquoted SQL",
+			line:     `2025-09-13 16:00:00.000 IST [9999] LOG:  AUDIT: SESSION,10,5,READ,SELECT,,,SELECT * FROM test_table WHERE id = 1;,<not logged>`,
+			emitRaw:  true,
+			wantType: "SELECT",
+			wantUser: nil,
+			wantDB:   nil,
+			wantErr:  false,
+		},
 	}
 
 	ctx := context.Background()
@@ -288,6 +379,81 @@ func TestParsePgAuditCSV(t *testing.T) {
 				if got[k] != want {
 					t.Errorf("for key %s, got %s, want %s", k, got[k], want)
 				}
+			}
+		})
+	}
+}
+
+// TestParsePgAuditCSVWithQuery tests the new function that extracts SQL queries from pgAudit CSV
+func TestParsePgAuditCSVWithQuery(t *testing.T) {
+	tests := []struct {
+		name        string
+		line        string
+		expectOK    bool
+		expectQuery string
+	}{
+		{
+			name:        "Unquoted SQL in pgAudit CSV",
+			line:        `2025-09-07 12:59:28.420 IST [8997] LOG:  AUDIT: SESSION,1,1,DDL,CREATE EXTENSION,,,CREATE EXTENSION pgaudit;,<not logged>`,
+			expectOK:    true,
+			expectQuery: "CREATE EXTENSION pgaudit;",
+		},
+		{
+			name:        "Quoted SQL in pgAudit CSV",
+			line:        `2025-09-13 15:55:03.428 IST [9307] LOG:  AUDIT: SESSION,6,1,WRITE,UPDATE,,,"/* comment */ UPDATE table SET col=$1",<not logged>`,
+			expectOK:    true,
+			expectQuery: `/* comment */ UPDATE table SET col=$1`, // CSV parser strips the quotes
+		},
+		{
+			name:        "Complex unquoted SQL with semicolon",
+			line:        `2025-09-13 14:51:18.070 IST [8675] LOG:  AUDIT: SESSION,2,1,READ,SELECT,,,SELECT COUNT(*) FROM healthcare.patient;,<not logged>`,
+			expectOK:    true,
+			expectQuery: "SELECT COUNT(*) FROM healthcare.patient;",
+		},
+		{
+			name:        "No AUDIT prefix",
+			line:        `2025-09-13 14:51:18.070 IST [8675] LOG:  Some other log message`,
+			expectOK:    false,
+			expectQuery: "",
+		},
+		{
+			name:        "Not enough CSV fields",
+			line:        `2025-09-13 14:51:18.070 IST [8675] LOG:  AUDIT: SESSION,1`,
+			expectOK:    false,
+			expectQuery: "",
+		},
+		{
+			name:        "pgAudit CSV without query field",
+			line:        `2025-09-13 14:51:18.070 IST [8675] LOG:  AUDIT: SESSION,1,1,READ,SELECT,,,`,
+			expectOK:    true,
+			expectQuery: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := parsePgAuditCSVWithQuery(tt.line)
+
+			if !tt.expectOK {
+				if result != nil {
+					t.Errorf("expected nil result, got %v", result)
+				}
+				return
+			}
+
+			if result == nil {
+				t.Errorf("expected non-nil result, got nil")
+				return
+			}
+
+			gotQuery := result["query"]
+			if gotQuery != tt.expectQuery {
+				t.Errorf("expected query %q, got %q", tt.expectQuery, gotQuery)
+			}
+
+			// Verify other fields are parsed correctly
+			if result["audit_class"] != "SESSION" {
+				t.Errorf("expected audit_class=SESSION, got %s", result["audit_class"])
 			}
 		})
 	}

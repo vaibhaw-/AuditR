@@ -25,7 +25,9 @@ func normalizeTimestamp(s string) string {
 // looksLikeSQL heuristically determines whether a string appears to be a SQL statement.
 // Used to avoid false positives when extracting queries from log lines.
 func looksLikeSQL(s string) bool {
-	up := strings.ToUpper(strings.TrimSpace(s))
+	// Normalize SQL to remove leading comments before checking keywords
+	normalized := normalizeSQL(s)
+	up := strings.ToUpper(strings.TrimSpace(normalized))
 
 	starters := []string{
 		// DML

@@ -38,21 +38,6 @@ func NewPostgresParser(opts ParserOptions) *PostgresParser {
 // 2025-09-19 12:00:00 LOG: AUDIT: SESSION,1,1,READ,SELECT,,, "SELECT ssn, name FROM patients WHERE id=42;",<none>
 var pgAuditQueryRe = regexp.MustCompile(`"(?s:(.*?))"(?:,|$)`) // lazy match between quotes
 
-// Regex to extract IPv4/IPv6-ish token occurrences (best-effort)
-// ipRe matches IPv4 and IPv6-like tokens in log lines (best-effort, not strict validation).
-var ipRe = regexp.MustCompile(`(\d{1,3}(?:\.\d{1,3}){3})|([0-9a-fA-F:]{3,})`)
-
-// time layouts we try to parse
-// timeLayouts lists timestamp formats commonly found in Postgres logs.
-// The parser tries each layout in order to normalize timestamps.
-var timeLayouts = []string{
-	"2006-01-02 15:04:05 MST",   // e.g., "2025-09-19 12:00:00 UTC"
-	"2006-01-02 15:04:05 -0700", // with numeric offset
-	"2006-01-02 15:04:05",       // common without zone (assume UTC)
-	time.RFC3339,                // ISO format if present
-	"Jan 2 15:04:05 2006",       // syslog-ish (rare)
-}
-
 // NOTE: required imports for this function (add to your file's import block if not present):
 // import (
 //     "context"
@@ -229,6 +214,11 @@ func (p *PostgresParser) parseTextLine(line string) (*Event, error) {
 		for i := len(matches) - 1; i >= 0; i-- {
 			candidate := strings.TrimSpace(matches[i][1])
 			candidate = strings.Trim(candidate, `"`) // strip surrounding quotes if present
+			// Skip empty candidates (common in pgAudit logs with empty fields)
+			if candidate == "" {
+				log.Debugw("skipping empty candidate", "index", i)
+				continue
+			}
 			log.Debugw("checking SQL candidate",
 				"index", i,
 				"candidate", candidate,
@@ -241,7 +231,22 @@ func (p *PostgresParser) parseTextLine(line string) (*Event, error) {
 		}
 	}
 
-	// If no SQL found in quotes, try "statement:" prefix
+	// If no SQL found in quotes, try parsing pgAudit CSV to get the query field
+	if q == "" {
+		if csvData := parsePgAuditCSVWithQuery(line); csvData != nil {
+			if sqlQuery := csvData["query"]; sqlQuery != "" {
+				log.Debugw("found SQL in pgAudit CSV field", "query", sqlQuery)
+				candidate := strings.TrimSpace(sqlQuery)
+				candidate = strings.Trim(candidate, `"`) // strip quotes if present
+				if looksLikeSQL(strings.ToUpper(candidate)) {
+					q = candidate
+					log.Debugw("found valid SQL in CSV field", "query", q)
+				}
+			}
+		}
+	}
+
+	// If no SQL found in CSV, try "statement:" prefix
 	if q == "" {
 		if idx := strings.Index(lower, "statement:"); idx >= 0 {
 			log.Debugw("found statement prefix", "position", idx)
@@ -277,9 +282,7 @@ func (p *PostgresParser) parseTextLine(line string) (*Event, error) {
 	if db := extractDBFromLine(line); db != "" {
 		evt.DBName = ptrString(db)
 	}
-	if ip := extractIPFromLine(line); ip != "" {
-		evt.ClientIP = ptrString(ip)
-	}
+
 	if p.opts.EmitRaw {
 		evt.RawQuery = ptrString(q)
 	}
@@ -449,16 +452,6 @@ func extractDBFromLine(line string) string {
 	return ""
 }
 
-// extractIPFromLine best-effort using regex to find an IP-like token.
-// extractIPFromLine uses a regex to find an IP-like token in a log line (best-effort).
-// Returns the IP string or empty if not found.
-func extractIPFromLine(line string) string {
-	if m := ipRe.FindString(line); m != "" {
-		return m
-	}
-	return ""
-}
-
 // detectBulkOperation checks if a query is a bulk operation and returns enrichment info.
 // It looks for several patterns that indicate bulk data operations:
 // - COPY TO/FROM: PostgreSQL's native bulk data transfer
@@ -575,6 +568,47 @@ func parsePgAuditCSV(line string) map[string]string {
 	}
 	if len(tokens) > 6 {
 		result["object_name"] = strings.TrimSpace(tokens[6])
+	}
+
+	return result
+}
+
+// parsePgAuditCSVWithQuery parses the CSV portion of a pgAudit log line and extracts the query field.
+// It returns a map of field name → string, including the "query" field, or nil if parsing fails.
+// This is similar to parsePgAuditCSV but also extracts the SQL query from the 8th CSV field.
+func parsePgAuditCSVWithQuery(line string) map[string]string {
+	idx := strings.Index(line, "AUDIT:")
+	if idx < 0 {
+		return nil
+	}
+	csvPart := strings.TrimSpace(line[idx+len("AUDIT:"):])
+
+	r := csv.NewReader(strings.NewReader(csvPart))
+	r.LazyQuotes = true
+	r.TrimLeadingSpace = true
+	r.FieldsPerRecord = -1
+
+	tokens, err := r.Read()
+	if err != nil || len(tokens) < 5 {
+		return nil
+	}
+
+	result := make(map[string]string)
+	result["audit_class"] = strings.TrimSpace(tokens[0])
+	result["session_id"] = strings.TrimSpace(tokens[1])
+	result["command_id"] = strings.TrimSpace(tokens[2])
+	result["action"] = strings.TrimSpace(tokens[3])
+	result["statement_type"] = strings.TrimSpace(tokens[4])
+
+	if len(tokens) > 5 {
+		result["object_type"] = strings.TrimSpace(tokens[5])
+	}
+	if len(tokens) > 6 {
+		result["object_name"] = strings.TrimSpace(tokens[6])
+	}
+	// Extract the SQL query field (8th field, index 7)
+	if len(tokens) > 7 {
+		result["query"] = strings.TrimSpace(tokens[7])
 	}
 
 	return result
