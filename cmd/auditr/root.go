@@ -57,9 +57,10 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is ./config.yaml)")
 	// add subcommands
 	rootCmd.AddCommand(parseCmd)
+	rootCmd.AddCommand(enrichCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(dictCmd)
-	// other commands (enrich, verify, etc.) to be added similarly
+	// other commands (verify, etc.) to be added similarly
 }
 
 func Execute() {

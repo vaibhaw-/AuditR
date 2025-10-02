@@ -8,7 +8,33 @@ This repository contains two complementary tools designed for the Practicum caps
 Together they form a complete demo pipeline:  
 **LoadR → Database (pgAudit / Percona) → Audit logs → AuditR → Enriched compliance reports**
 
-# 📋 Prerequisites #
+## 🚀 Quick Start
+
+```bash
+# 1. Build the tools
+make
+
+# 2. Generate and load test data
+./bin/loadr load --config cmd/loadr/config/load_pg.yaml
+createdb practicumdb && psql -d practicumdb -f seed_pg.sql
+
+# 3. Run workload to generate audit logs
+./bin/loadr run --config cmd/loadr/config/run_pg.yaml
+
+# 4. Parse audit logs
+./bin/auditr parse --db postgres --input /path/to/pgaudit.log --output parsed.ndjson --emit-raw
+
+# 5. Extract schema
+psql -d practicumdb -c "SELECT current_database(), schemaname, tablename, attname, format_type(atttypid, atttypmod) FROM pg_attribute a JOIN pg_class c ON a.attrelid = c.oid JOIN pg_namespace n ON c.relnamespace = n.oid JOIN pg_tables t ON c.relname = t.tablename AND n.nspname = t.schemaname WHERE a.attnum > 0 AND NOT a.attisdropped ORDER BY schemaname, tablename, attname;" --csv > schema.csv
+
+# 6. Enrich with sensitivity detection
+./bin/auditr enrich --schema schema.csv --dict cmd/auditr/config/sensitivity_dict_extended.json --risk cmd/auditr/config/risk_scoring.json --input parsed.ndjson --output enriched.ndjson --emit-unknown
+
+# 7. Analyze results
+jq '.risk_level' enriched.ndjson | sort | uniq -c
+```
+
+# 📋 Prerequisites
 Before using AuditR and LoadR, ensure the following:
 
 PostgreSQL 16 with:
@@ -230,13 +256,15 @@ AuditR is a CLI tool that processes database audit logs into tamper-evident, enr
 
 ## Features
 
-* Parse PostgreSQL pgAudit or MySQL Percona Audit Log Plugin logs
-* Normalize into NDJSON format
-* Enrich with schema metadata (PII, PHI, Financial tagging)
-* Support schema dump (--schema) or live read-only DB (--db-uri)
-* Tamper-evidence using SHA-256 hash chaining
-* Query/filter logs for compliance reporting (e.g., "all PII access in last 7 days")
-* Comprehensive logging with configurable output and debug levels
+* **Parse** PostgreSQL pgAudit or MySQL Percona Audit Log Plugin logs
+* **Normalize** into NDJSON format with structured event data
+* **Enrich** with schema metadata, sensitivity classification, and risk scoring
+* **Detect** bulk operations (SELECT *, COPY, LOAD DATA) automatically
+* **Classify** sensitive data (PII, PHI, Financial) using regex-based dictionaries
+* **Score** risk levels (low, medium, high, critical) based on data combinations
+* **Handle errors** gracefully - never lose data, emit structured ERROR events
+* **Log comprehensively** with configurable output levels and run summaries
+* **Support** both PostgreSQL and MySQL audit log formats
 
 ## Logging Configuration
 
@@ -325,28 +353,447 @@ When troubleshooting, you can enable debug logging to see:
    development: true
    ```
 
-## CLI Overview
-## Enrichment Example
+## CLI Commands
+
+AuditR provides several subcommands for different phases of audit log processing:
+
+```bash
+auditr [command] --help
+
+Available Commands:
+  parse       Convert raw DB audit logs → NDJSON events
+  enrich      Enrich parsed audit events with sensitivity classification and risk scoring
+  dict        Validate sensitivity dictionaries and risk scoring configs
+  version     Show AuditR version
+```
+
+### 1. Parse Command
+
+Convert raw audit logs into structured NDJSON format:
+
+```bash
+# Parse PostgreSQL pgAudit logs
+auditr parse --db postgres --input pgaudit.log --output parsed.ndjson --emit-raw
+
+# Parse MySQL Percona Audit logs
+auditr parse --db mysql --input mysql_audit.log --output parsed.ndjson --emit-raw --reject-file rejected.jsonl
+
+# Parse with streaming (tail mode)
+auditr parse --db postgres --input pgaudit.log --follow --emit-raw
+```
+
+**Input**: Raw audit log files from pgAudit or Percona Audit Plugin  
+**Output**: NDJSON with structured events like:
+
+```json
+{
+  "event_id": "abc-123-def",
+  "timestamp": "2025-01-01T12:00:00Z",
+  "db_system": "postgres",
+  "db_user": "appuser1",
+  "query_type": "SELECT",
+  "raw_query": "SELECT ssn, email FROM healthcare.patient WHERE patient_id = '123';"
+}
+```
+
+### 2. Enrich Command
+
+Add sensitivity classification, risk scoring, and bulk operation detection:
+
+```bash
+# Basic enrichment
+auditr enrich \
+  --schema postgres_schema.csv \
+  --dict sensitivity_dict_extended.json \
+  --risk risk_scoring.json \
+  --input parsed.ndjson \
+  --output enriched.ndjson \
+
+# With debug information and unknown event emission
+auditr enrich \
+  --schema postgres_schema.csv \
+  --dict sensitivity_dict_extended.json \
+  --risk risk_scoring.json \
+  --input parsed.ndjson \
+  --output enriched.ndjson \
+  --emit-unknown \
+  --debug
+```
+
+**Input**: NDJSON from parse command + schema CSV + sensitivity dictionary + risk scoring policy  
+**Output**: Enriched NDJSON with sensitivity and risk information:
+
+```json
+{
+  "event_id": "abc-123-def",
+  "timestamp": "2025-01-01T12:00:00Z",
+  "db_system": "postgres",
+  "db_user": "appuser1",
+  "query_type": "SELECT",
+  "raw_query": "SELECT ssn, email FROM healthcare.patient WHERE patient_id = '123';",
+  "sensitivity": ["PII:ssn", "PII:email"],
+  "risk_level": "medium",
+  "bulk": false
+}
+```
+
+### 3. Schema CSV Format
+
+The `--schema` flag expects a CSV file with the following format:
+
+```csv
+db_name,schema_name,table_name,column_name,column_type
+practicumdb,healthcare,patient,patient_id,uuid
+practicumdb,healthcare,patient,ssn,varchar
+practicumdb,healthcare,patient,email,varchar
+practicumdb,healthcare,patient,dob,date
+practicumdb,healthcare,encounter,diagnosis,text
+```
+
+**Generate schema CSV:**
+```bash
+# PostgreSQL
+psql -d practicumdb -c "
+SELECT 
+  current_database() as db_name,
+  schemaname as schema_name,
+  tablename as table_name,
+  attname as column_name,
+  format_type(atttypid, atttypmod) as column_type
+FROM pg_attribute a
+JOIN pg_class c ON a.attrelid = c.oid
+JOIN pg_namespace n ON c.relnamespace = n.oid
+JOIN pg_tables t ON c.relname = t.tablename AND n.nspname = t.schemaname
+WHERE a.attnum > 0 AND NOT a.attisdropped
+ORDER BY schemaname, tablename, attname;
+" --csv > postgres_schema.csv
+
+# MySQL
+mysql -u user -p -D practicumdb -e "
+SELECT 
+  TABLE_SCHEMA as db_name,
+  'default' as schema_name,
+  TABLE_NAME as table_name,
+  COLUMN_NAME as column_name,
+  COLUMN_TYPE as column_type
+FROM INFORMATION_SCHEMA.COLUMNS 
+WHERE TABLE_SCHEMA = 'practicumdb'
+ORDER BY TABLE_NAME, COLUMN_NAME;
+" --batch --raw > mysql_schema.csv
+```
+
 ## 📑 Sensitivity Dictionaries
 
-AuditR uses JSON dictionaries to detect sensitive fields:
-* Regex-based matching for column names
-* Expected types (e.g., DATE for dob, CHAR(4) for card_last4)
-* Sample patterns (optional, for values)
-* Negative dictionary for overrides (to prevent false positives)
+AuditR uses JSON dictionaries to detect sensitive fields with regex-based matching:
 
-See dict/sensitivity_dict_extended.json.
+### Dictionary Structure
+
+```json
+{
+  "PII": [
+    {
+      "regex": "(?i)^ssn$",
+      "expected_types": ["VARCHAR", "CHAR", "TEXT"],
+      "sample_pattern": "^\\d{3}-\\d{2}-\\d{4}$"
+    },
+    {
+      "regex": "(?i)^email$",
+      "expected_types": ["VARCHAR", "TEXT"],
+      "sample_pattern": ".+@.+\\..+"
+    }
+  ],
+  "PHI": [
+    {
+      "regex": "(?i)diagnosis",
+      "expected_types": ["VARCHAR", "TEXT"],
+      "sample_pattern": ".*"
+    }
+  ],
+  "Financial": [
+    {
+      "regex": "(?i)card.*last",
+      "expected_types": ["VARCHAR", "CHAR"],
+      "sample_pattern": "^\\d{4}$"
+    }
+  ],
+  "negative": [
+    {
+      "regex": "(?i).*_id$",
+      "reason": "ID fields are not sensitive data"
+    }
+  ]
+}
+```
+
+### Risk Scoring Policy
+
+```json
+{
+  "base": {
+    "PII": "medium",
+    "PHI": "high", 
+    "Financial": "high"
+  },
+  "combinations": {
+    "PII+PHI": "high",
+    "PII+Financial": "critical",
+    "PHI+Financial": "critical",
+    "PII+PHI+Financial": "critical"
+  },
+  "default": "low"
+}
+```
+
+### Features
+
+* **Regex-based matching** for flexible column name detection
+* **Type validation** ensures matches are on appropriate data types
+* **Sample patterns** for additional validation (optional)
+* **Negative rules** prevent false positives on ID fields, etc.
+* **Risk combinations** handle multiple sensitivity categories
+* **Bulk operation detection** for SELECT *, COPY, LOAD DATA operations
+
+### Dictionary Validation
+
+Validate your sensitivity dictionaries and risk scoring policies:
+
+```bash
+# Validate dictionary and risk scoring files
+auditr dict validate \
+  --dict sensitivity_dict_extended.json \
+  --risk risk_scoring.json
+
+# Example output:
+# ✅ Dictionary validation passed: 3 categories, 11 rules, 2 negative rules
+# ✅ Risk scoring validation passed: 3 base categories, 4 combinations
+```
+
+## Error Handling
+
+AuditR follows a **never-lose-data** philosophy. When errors occur during processing, structured ERROR events are emitted instead of dropping data:
+
+```json
+{
+  "event_id": "error-1759337683666707000",
+  "timestamp": "2025-10-01T16:54:43Z",
+  "query_type": "ERROR",
+  "raw_query": "invalid json line",
+  "error": {
+    "phase": "enrich",
+    "message": "JSON parse error: invalid character 'i' looking for beginning of value"
+  }
+}
+```
+
+## Run Log and Metrics
+
+AuditR generates structured run logs in NDJSON format for monitoring and compliance:
+
+```json
+{
+  "stage": "enrich",
+  "ts": "2025-10-01T22:27:31+05:30",
+  "counters": {
+    "input_events": 100,
+    "enriched_events": 25,
+    "unknown_events": 70,
+    "dropped_events": 0,
+    "error_events": 5
+  }
+}
+```
 
 # 🧩 End-to-End Demo Pipeline
-## Generate schema + data
-## Run workload (queries → audit logs produced by pgAudit/Percona).
-## Parse logs
-## Enrich
-## Verify & query
+
+Here's a complete walkthrough of using LoadR and AuditR together:
+
+## Step 1: Generate Schema + Data
+
+```bash
+# Build the tools
+make
+
+# Generate PostgreSQL seed data
+./bin/loadr load --config cmd/loadr/config/load_pg.yaml
+
+# Import into database
+createdb -U postgres practicumdb
+psql -U postgres -d practicumdb -f seed_pg.sql
+```
+
+## Step 2: Run Workload (Generate Audit Logs)
+
+```bash
+# Configure pgAudit in postgresql.conf:
+# shared_preload_libraries = 'pgaudit'
+# pgaudit.log = 'write, function, role, ddl'
+# pgaudit.log_catalog = off
+
+# Run synthetic workload
+./bin/loadr run --config cmd/loadr/config/run_pg.yaml
+
+# This generates audit logs in PostgreSQL log files
+```
+
+## Step 3: Parse Audit Logs
+
+```bash
+# Parse pgAudit logs into structured NDJSON
+./bin/auditr parse \
+  --db postgres \
+  --input /opt/homebrew/var/log/postgresql@16.log \
+  --output parsed_events.ndjson \
+  --reject-file rejected.jsonl \
+  --emit-raw
+
+# Check results
+echo "Parsed $(wc -l < parsed_events.ndjson) events"
+echo "Rejected $(wc -l < rejected.jsonl) lines"
+```
+
+## Step 4: Generate Schema CSV
+
+```bash
+# Extract schema information
+psql -d practicumdb -c "
+SELECT 
+  current_database() as db_name,
+  schemaname as schema_name,
+  tablename as table_name,
+  attname as column_name,
+  format_type(atttypid, atttypmod) as column_type
+FROM pg_attribute a
+JOIN pg_class c ON a.attrelid = c.oid
+JOIN pg_namespace n ON c.relnamespace = n.oid
+JOIN pg_tables t ON c.relname = t.tablename AND n.nspname = t.schemaname
+WHERE a.attnum > 0 AND NOT a.attisdropped
+  AND schemaname IN ('healthcare', 'pharmacy', 'payments')
+ORDER BY schemaname, tablename, attname;
+" --csv > postgres_schema.csv
+```
+
+## Step 5: Enrich with Sensitivity Classification
+
+```bash
+# Enrich events with PII/PHI/Financial detection
+./bin/auditr enrich \
+  --schema postgres_schema.csv \
+  --dict cmd/auditr/config/sensitivity_dict_extended.json \
+  --risk cmd/auditr/config/risk_scoring.json \
+  --input parsed_events.ndjson \
+  --output enriched_events.ndjson \
+  --emit-unknown \
+  --debug
+
+# Check enrichment results
+echo "Enriched $(wc -l < enriched_events.ndjson) events"
+```
+
+## Step 6: Analyze Results
+
+```bash
+# Count sensitive events by category
+jq -r 'select(.sensitivity and (.sensitivity | length > 0)) | .sensitivity[]' enriched_events.ndjson | \
+  cut -d: -f1 | sort | uniq -c
+
+# Count by risk level
+jq -r '.risk_level' enriched_events.ndjson | sort | uniq -c
+
+# Find high-risk events
+jq 'select(.risk_level == "high" or .risk_level == "critical")' enriched_events.ndjson
+
+# Find bulk operations
+jq 'select(.bulk == true)' enriched_events.ndjson
+
+# Check run log for metrics
+cat logs/run_log.jsonl | jq .
+```
+
+## Expected Results
+
+After running the complete pipeline, you should see:
+
+- **Parsed Events**: ~200-500 structured audit events
+- **Sensitive Data Detection**: PII (SSN, email, phone), PHI (diagnosis, treatment), Financial (payment info)
+- **Risk Scoring**: Events classified as low/medium/high/critical based on data combinations
+- **Bulk Operations**: SELECT * queries flagged as bulk operations
+- **Error Handling**: Any malformed log lines converted to ERROR events
+- **Run Metrics**: Detailed statistics in `logs/run_log.jsonl`
+
+### Sample Enriched Event
+
+```json
+{
+  "event_id": "abc-123-def",
+  "timestamp": "2025-01-01T12:00:00Z",
+  "db_system": "postgres",
+  "db_user": "appuser1",
+  "query_type": "INSERT",
+  "raw_query": "INSERT INTO healthcare.patient (ssn, email, dob) VALUES ('123-45-6789', 'john@example.com', '1990-01-01');",
+  "sensitivity": ["PII:ssn", "PII:email", "PII:dob"],
+  "risk_level": "medium",
+  "bulk": false,
+  "debug_info": {
+    "parsed_tables": {"patient": "patient"},
+    "parsed_columns": ["ssn", "email", "dob"],
+    "resolved_columns": 3,
+    "matched_columns": 3,
+    "schema_status": "matched"
+  }
+}
+```
 
 # 📊 Visualization
 
+The enriched NDJSON output can be easily analyzed and visualized using standard tools:
+
+## Analysis Examples
+
+```bash
+# Top 10 most accessed sensitive columns
+jq -r '.sensitivity[]?' enriched_events.ndjson | sort | uniq -c | sort -nr | head -10
+
+# Risk level distribution
+jq -r '.risk_level' enriched_events.ndjson | sort | uniq -c
+
+# Users accessing sensitive data
+jq -r 'select(.sensitivity and (.sensitivity | length > 0)) | .db_user' enriched_events.ndjson | sort | uniq -c
+
+# Bulk operations by type
+jq -r 'select(.bulk == true) | .bulk_type' enriched_events.ndjson | sort | uniq -c
+
+# Timeline of high-risk events
+jq -r 'select(.risk_level == "high" or .risk_level == "critical") | [.timestamp, .db_user, .risk_level, (.sensitivity | join(","))] | @csv' enriched_events.ndjson
+```
+
+## Integration with Analytics Tools
+
+The NDJSON format is compatible with:
+
+- **Elasticsearch/Kibana**: For real-time dashboards and alerting
+- **Splunk**: For enterprise log analysis and compliance reporting  
+- **Grafana**: For time-series visualization of audit metrics
+- **Jupyter Notebooks**: For data science analysis and ML-based anomaly detection
+- **Apache Spark**: For large-scale batch processing and analytics
+
 # 📝 Future Enhancements
+
+## Planned Features
+
+- **Hash Chain Verification**: Tamper-evident audit trails with SHA-256 chaining
+- **Query Command**: Filter and export enriched events for compliance reporting
+- **Real-time Processing**: Stream processing mode for live audit log analysis
+- **Advanced Analytics**: ML-based anomaly detection for unusual access patterns
+- **Compliance Reports**: Pre-built templates for HIPAA, SOX, GDPR reporting
+- **Web Dashboard**: Real-time visualization of audit metrics and alerts
+
+## Extensibility
+
+- **Custom Dictionaries**: Support for industry-specific sensitivity patterns
+- **Plugin Architecture**: Custom enrichment processors and output formats
+- **Database Connectors**: Direct integration with audit log tables
+- **Alert Integration**: Webhook/email notifications for high-risk events
+- **Multi-tenant Support**: Isolated processing for different organizations
 
 # License
 MIT License – free to use for academic or demo purposes.
