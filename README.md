@@ -363,6 +363,7 @@ auditr [command] --help
 Available Commands:
   parse       Convert raw DB audit logs → NDJSON events
   enrich      Enrich parsed audit events with sensitivity classification and risk scoring
+  verify      Compute/validate hash chain, generate/verify checkpoints
   dict        Validate sensitivity dictionaries and risk scoring configs
   version     Show AuditR version
 ```
@@ -437,7 +438,37 @@ auditr enrich \
 }
 ```
 
-### 3. Schema CSV Format
+### 3. Verify Command
+
+Compute or validate per-event hash chains and manage checkpoints.
+
+```bash
+# Hash mode (default) – writes hash fields, auto-checkpoint at file end if configured
+auditr verify \
+  --input enriched.ndjson \
+  --output hashed.ndjson \
+  --checkpoint            # optional (overrides config to force checkpoint)
+  --private-key private.pem
+
+# Verify mode – validate an existing hashed file
+auditr verify \
+  --input hashed.ndjson \
+  --public-key public.pem \
+  --checkpoint-path ./checkpoints/checkpoint-<ts>-<idx>.json \
+  --summary              # print one-line result
+
+# Detailed output
+auditr verify --input hashed.ndjson --public-key public.pem --detailed
+```
+
+Notes:
+- Summary/detailed:
+  - `--summary` prints a single line and writes a slim run_log entry.
+  - `--detailed` prints richer info and adds `duration_ms` to the run_log.
+- Auto-checkpointing: if `hashing.checkpoint_interval: file_end` in config, a checkpoint is written at the end of each hash run without needing `--checkpoint`.
+- Multi-file continuity: the chain continues across runs using `hashing.state_file`. Verifying files independently may flag the first event of a later file unless you verify the concatenated stream or reset state.
+
+### 4. Schema CSV Format
 
 The `--schema` flag expects a CSV file with the following format:
 

@@ -60,7 +60,7 @@ func init() {
 	rootCmd.AddCommand(enrichCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(dictCmd)
-	// other commands (verify, etc.) to be added similarly
+	rootCmd.AddCommand(verifyCmd)
 }
 
 func Execute() {
