@@ -443,23 +443,38 @@ auditr enrich \
 Compute or validate per-event hash chains and manage checkpoints.
 
 ```bash
-# Hash mode (default) – writes hash fields, auto-checkpoint at file end if configured
+# Hash mode – writes hash fields, auto-checkpoint at file end if configured
 auditr verify \
   --input enriched.ndjson \
   --output hashed.ndjson \
   --checkpoint            # optional (overrides config to force checkpoint)
   --private-key private.pem
 
-# Verify mode – validate an existing hashed file
+# Hash mode without checkpointing (no private key needed)
+auditr verify \
+  --input enriched.ndjson \
+  --output hashed.ndjson
+
+# Verify mode – validate hash chain integrity only (no checkpoint verification)
 auditr verify \
   --input hashed.ndjson \
-  --public-key public.pem \
-  --checkpoint-path ./checkpoints/checkpoint-<ts>-<idx>.json \
   --summary              # print one-line result
 
-# Detailed output
-auditr verify --input hashed.ndjson --public-key public.pem --detailed
+# Verify mode with checkpoint validation – validate hash chain + checkpoint signature
+auditr verify \
+  --input hashed.ndjson \
+  --checkpoint-path ./checkpoints/checkpoint-<ts>-<idx>.json \
+  --public-key public.pem \
+  --detailed
 ```
+
+**Mode Selection:**
+- **Hash mode**: When `--output` is provided (writes hashed file)
+- **Verify mode**: When no `--output` is provided (reads and verifies existing hashed file)
+
+**Key Requirements:**
+- **Private key**: Only needed for hash mode when creating checkpoints (`--checkpoint` or `hashing.checkpoint_interval: file_end`)
+- **Public key**: Only needed for verify mode when validating checkpoints (`--checkpoint-path` provided)
 
 Notes:
 - Summary/detailed:
@@ -839,11 +854,17 @@ openssl ec -in public.pem -pubin -text -noout
 ### Example Usage
 
 ```bash
+# Hash mode without checkpointing (no keys needed)
+auditr verify --input enriched.ndjson --output hashed.ndjson
+
 # Hash mode with checkpointing (requires private key)
 auditr verify --input enriched.ndjson --output hashed.ndjson --checkpoint --private-key private.pem
 
+# Verify mode without checkpoint validation (no keys needed)
+auditr verify --input hashed.ndjson --summary
+
 # Verify mode with checkpoint validation (requires public key + checkpoint file)
-auditr verify --input hashed.ndjson --public-key public.pem --checkpoint-path ./checkpoints/checkpoint-*.json
+auditr verify --input hashed.ndjson --checkpoint-path ./checkpoints/checkpoint-*.json --public-key public.pem
 ```
 
 # 📝 Future Enhancements

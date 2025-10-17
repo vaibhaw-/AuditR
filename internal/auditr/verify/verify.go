@@ -60,11 +60,44 @@ func RunVerifyPhase(cfg *config.Config, args VerifyArgs) error {
 	log := logger.L()
 	start := time.Now().UTC()
 
-	// Determine operation mode based on presence of public key
+	// Determine operation mode based on presence of output file
+	// Hash mode: compute hash chains and optionally create checkpoints (has --output)
+	// Verify mode: verify existing hash chains and optionally validate checkpoints (no --output)
 	mode := "hash"
-	if args.PublicKeyPath != "" {
+	if args.OutputFile == "" {
 		mode = "verify"
 	}
+
+	// Validate all requirements upfront before doing any work
+	if mode == "hash" {
+		// Hash mode: validate checkpoint requirements if checkpointing is requested
+		if args.Checkpoint || cfg.Hashing.CheckpointInterval == "file_end" {
+			key := args.PrivateKeyPath
+			if key == "" {
+				key = cfg.Signing.PrivateKeyPath
+			}
+			if key == "" {
+				return fmt.Errorf("checkpoint requested but signing key not provided (use --private-key or signing.private_key_path)")
+			}
+			if _, err := os.Stat(key); err != nil {
+				return fmt.Errorf("checkpoint requested but signing key not found: %s", key)
+			}
+		}
+	} else {
+		// Verify mode: validate checkpoint requirements if checkpoint verification is requested
+		if args.CheckpointPath != "" {
+			if args.PublicKeyPath == "" {
+				return fmt.Errorf("checkpoint verification requires --public-key")
+			}
+			if _, err := os.Stat(args.PublicKeyPath); err != nil {
+				return fmt.Errorf("public key not found: %s", args.PublicKeyPath)
+			}
+			if _, err := os.Stat(args.CheckpointPath); err != nil {
+				return fmt.Errorf("checkpoint file not found: %s", args.CheckpointPath)
+			}
+		}
+	}
+
 	log.Infow("verify phase start", "mode", mode, "input", args.InputFile, "output", args.OutputFile)
 
 	// Set up input file (stdin if no file specified)
@@ -128,15 +161,7 @@ func RunVerifyPhase(cfg *config.Config, args VerifyArgs) error {
 				key = cfg.Signing.PrivateKeyPath
 			}
 
-			// Validate signing key presence and existence
-			if key == "" {
-				return fmt.Errorf("checkpoint requested but signing key not provided (use --private-key or signing.private_key_path)")
-			}
-			if _, err := os.Stat(key); err != nil {
-				return fmt.Errorf("checkpoint requested but signing key not found: %s", key)
-			}
-
-			// Create and sign checkpoint
+			// Create and sign checkpoint (validation already done upfront)
 			path, err := WriteCheckpoint(cfg.Hashing.CheckpointDir, newState.LastChainIndex, newState.LastHeadHash, key)
 			if err != nil {
 				return err
@@ -162,23 +187,10 @@ func RunVerifyPhase(cfg *config.Config, args VerifyArgs) error {
 		summary.EventsProcessed = processed
 		summary.TamperedEvents = tampered
 
-		// Verify checkpoint if provided
+		// Verify checkpoint if provided (optional in verify mode)
 		verified := true
-		if args.CheckpointPath != "" || args.PublicKeyPath != "" {
-			// Both public key and checkpoint path are required for verification
-			if args.CheckpointPath == "" || args.PublicKeyPath == "" {
-				return fmt.Errorf("checkpoint verification requires both --public-key and --checkpoint-path")
-			}
-
-			// Validate that both files exist
-			if _, err := os.Stat(args.PublicKeyPath); err != nil {
-				return fmt.Errorf("public key not found: %s", args.PublicKeyPath)
-			}
-			if _, err := os.Stat(args.CheckpointPath); err != nil {
-				return fmt.Errorf("checkpoint file not found: %s", args.CheckpointPath)
-			}
-
-			// Verify the checkpoint signature and head hash match
+		if args.CheckpointPath != "" {
+			// Verify the checkpoint signature and head hash match (validation already done upfront)
 			v, err := VerifyCheckpoint(args.CheckpointPath, args.PublicKeyPath, headHash)
 			if err != nil {
 				return err
@@ -186,6 +198,10 @@ func RunVerifyPhase(cfg *config.Config, args VerifyArgs) error {
 			verified = v
 			summary.CheckpointsVerified = v
 			log.Infow("checkpoint verify", "path", args.CheckpointPath, "result", v)
+		} else {
+			// No checkpoint provided - just verify hash chain integrity
+			summary.CheckpointsVerified = false
+			log.Infow("no checkpoint provided - verifying hash chain only")
 		}
 
 		// Determine overall status based on chain and checkpoint verification

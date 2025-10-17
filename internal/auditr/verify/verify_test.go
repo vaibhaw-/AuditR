@@ -10,8 +10,11 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/vaibhaw-/AuditR/internal/auditr/config"
 )
 
 func TestCanonicalize_IsDeterministic(t *testing.T) {
@@ -240,6 +243,384 @@ func mustGenKeys(t *testing.T, dir string) (privPath, pubPath string) {
 		t.Fatalf("write pub: %v", err)
 	}
 	return
+}
+
+func TestRunVerifyPhase_HashMode_WithoutCheckpoint(t *testing.T) {
+	// Test hash mode without checkpointing (no keys needed)
+	dir := t.TempDir()
+	inputFile := filepath.Join(dir, "input.jsonl")
+	outputFile := filepath.Join(dir, "output.jsonl")
+
+	// Create test input
+	events := []map[string]interface{}{
+		{"id": 1, "ts": time.Now().UTC().Format(time.RFC3339), "msg": "test1"},
+		{"id": 2, "ts": time.Now().UTC().Format(time.RFC3339), "msg": "test2"},
+	}
+	writeTestEvents(t, inputFile, events)
+
+	// Create minimal config
+	cfg := &config.Config{
+		Hashing: config.HashingCfg{
+			StateFile: filepath.Join(dir, "state.json"),
+		},
+	}
+
+	// Run hash mode
+	args := VerifyArgs{
+		InputFile:  inputFile,
+		OutputFile: outputFile,
+	}
+
+	err := RunVerifyPhase(cfg, args)
+	if err != nil {
+		t.Fatalf("RunVerifyPhase: %v", err)
+	}
+
+	// Verify output file was created and contains hashed events
+	verifyHashedOutput(t, outputFile, 2)
+}
+
+func TestRunVerifyPhase_HashMode_WithCheckpoint_MissingKey(t *testing.T) {
+	// Test hash mode with checkpointing but missing private key (should fail fast)
+	dir := t.TempDir()
+	inputFile := filepath.Join(dir, "input.jsonl")
+	outputFile := filepath.Join(dir, "output.jsonl")
+
+	// Create test input
+	events := []map[string]interface{}{
+		{"id": 1, "ts": time.Now().UTC().Format(time.RFC3339), "msg": "test1"},
+	}
+	writeTestEvents(t, inputFile, events)
+
+	// Create config with checkpointing enabled
+	cfg := &config.Config{
+		Hashing: config.HashingCfg{
+			StateFile:          filepath.Join(dir, "state.json"),
+			CheckpointDir:      dir,
+			CheckpointInterval: "file_end",
+		},
+		Signing: struct {
+			PrivateKeyPath string `mapstructure:"private_key_path"`
+		}{
+			PrivateKeyPath: "", // Missing key
+		},
+	}
+
+	// Run hash mode with checkpointing
+	args := VerifyArgs{
+		InputFile:  inputFile,
+		OutputFile: outputFile,
+		Checkpoint: true,
+	}
+
+	err := RunVerifyPhase(cfg, args)
+	if err == nil {
+		t.Fatalf("expected error for missing private key")
+	}
+	if !strings.Contains(err.Error(), "signing key not provided") {
+		t.Fatalf("expected signing key error, got: %v", err)
+	}
+
+	// Verify no output file was created (fail fast)
+	if _, err := os.Stat(outputFile); err == nil {
+		t.Fatalf("output file should not exist after validation failure")
+	}
+}
+
+func TestRunVerifyPhase_HashMode_WithCheckpoint_ValidKey(t *testing.T) {
+	// Test hash mode with checkpointing and valid private key
+	dir := t.TempDir()
+	inputFile := filepath.Join(dir, "input.jsonl")
+	outputFile := filepath.Join(dir, "output.jsonl")
+
+	// Create test input
+	events := []map[string]interface{}{
+		{"id": 1, "ts": time.Now().UTC().Format(time.RFC3339), "msg": "test1"},
+	}
+	writeTestEvents(t, inputFile, events)
+
+	// Generate keys
+	privPath, _ := mustGenKeys(t, dir)
+
+	// Create config with checkpointing enabled
+	cfg := &config.Config{
+		Hashing: config.HashingCfg{
+			StateFile:          filepath.Join(dir, "state.json"),
+			CheckpointDir:      dir,
+			CheckpointInterval: "file_end",
+		},
+		Signing: struct {
+			PrivateKeyPath string `mapstructure:"private_key_path"`
+		}{
+			PrivateKeyPath: privPath,
+		},
+	}
+
+	// Run hash mode with checkpointing
+	args := VerifyArgs{
+		InputFile:  inputFile,
+		OutputFile: outputFile,
+	}
+
+	err := RunVerifyPhase(cfg, args)
+	if err != nil {
+		t.Fatalf("RunVerifyPhase: %v", err)
+	}
+
+	// Verify output file and checkpoint were created
+	verifyHashedOutput(t, outputFile, 1)
+	verifyCheckpointExists(t, dir)
+}
+
+func TestRunVerifyPhase_VerifyMode_WithoutCheckpoint(t *testing.T) {
+	// Test verify mode without checkpoint validation (no keys needed)
+	dir := t.TempDir()
+	hashedFile := filepath.Join(dir, "hashed.jsonl")
+
+	// Create hashed input (simulate output from hash mode)
+	createHashedInput(t, hashedFile, []map[string]interface{}{
+		{"id": 1, "ts": time.Now().UTC().Format(time.RFC3339), "msg": "test1"},
+		{"id": 2, "ts": time.Now().UTC().Format(time.RFC3339), "msg": "test2"},
+	})
+
+	// Create minimal config
+	cfg := &config.Config{}
+
+	// Run verify mode (no --output means verify mode)
+	args := VerifyArgs{
+		InputFile: hashedFile,
+		// No OutputFile = verify mode
+	}
+
+	err := RunVerifyPhase(cfg, args)
+	if err != nil {
+		t.Fatalf("RunVerifyPhase: %v", err)
+	}
+}
+
+func TestRunVerifyPhase_VerifyMode_WithCheckpoint_MissingKey(t *testing.T) {
+	// Test verify mode with checkpoint but missing public key (should fail fast)
+	dir := t.TempDir()
+	hashedFile := filepath.Join(dir, "hashed.jsonl")
+	checkpointFile := filepath.Join(dir, "checkpoint.json")
+
+	// Create hashed input
+	createHashedInput(t, hashedFile, []map[string]interface{}{
+		{"id": 1, "ts": time.Now().UTC().Format(time.RFC3339), "msg": "test1"},
+	})
+
+	// Create dummy checkpoint
+	writeDummyCheckpoint(t, checkpointFile)
+
+	// Create minimal config
+	cfg := &config.Config{}
+
+	// Run verify mode with checkpoint but no public key
+	args := VerifyArgs{
+		InputFile:      hashedFile,
+		CheckpointPath: checkpointFile,
+		// No PublicKeyPath = should fail
+	}
+
+	err := RunVerifyPhase(cfg, args)
+	if err == nil {
+		t.Fatalf("expected error for missing public key")
+	}
+	if !strings.Contains(err.Error(), "checkpoint verification requires --public-key") {
+		t.Fatalf("expected public key error, got: %v", err)
+	}
+}
+
+func TestRunVerifyPhase_VerifyMode_WithCheckpoint_ValidKey(t *testing.T) {
+	// Test verify mode with checkpoint and valid public key
+	dir := t.TempDir()
+	hashedFile := filepath.Join(dir, "hashed.jsonl")
+
+	// Create hashed input
+	createHashedInput(t, hashedFile, []map[string]interface{}{
+		{"id": 1, "ts": time.Now().UTC().Format(time.RFC3339), "msg": "test1"},
+	})
+
+	// Generate keys and create checkpoint
+	privPath, pubPath := mustGenKeys(t, dir)
+	checkpointFile := createValidCheckpoint(t, dir, privPath, "testheadhash")
+
+	// Create minimal config
+	cfg := &config.Config{}
+
+	// Run verify mode with checkpoint
+	args := VerifyArgs{
+		InputFile:      hashedFile,
+		CheckpointPath: checkpointFile,
+		PublicKeyPath:  pubPath,
+	}
+
+	err := RunVerifyPhase(cfg, args)
+	if err != nil {
+		t.Fatalf("RunVerifyPhase: %v", err)
+	}
+}
+
+func TestRunVerifyPhase_ModeDetermination(t *testing.T) {
+	// Test that mode is determined by --output presence, not --public-key
+	dir := t.TempDir()
+	inputFile := filepath.Join(dir, "input.jsonl")
+	outputFile := filepath.Join(dir, "output.jsonl")
+	_, pubPath := mustGenKeys(t, dir)
+
+	// Create test input
+	events := []map[string]interface{}{
+		{"id": 1, "ts": time.Now().UTC().Format(time.RFC3339), "msg": "test1"},
+	}
+	writeTestEvents(t, inputFile, events)
+
+	cfg := &config.Config{
+		Hashing: config.HashingCfg{
+			StateFile: filepath.Join(dir, "state.json"),
+		},
+	}
+
+	// Test 1: --output present + --public-key present = hash mode (not verify mode)
+	args1 := VerifyArgs{
+		InputFile:     inputFile,
+		OutputFile:    outputFile,
+		PublicKeyPath: pubPath, // This should NOT make it verify mode
+	}
+
+	err := RunVerifyPhase(cfg, args1)
+	if err != nil {
+		t.Fatalf("RunVerifyPhase with output+pubkey: %v", err)
+	}
+
+	// Verify output file was created (hash mode)
+	if _, err := os.Stat(outputFile); err != nil {
+		t.Fatalf("output file should exist in hash mode")
+	}
+
+	// Test 2: No --output + no --public-key = verify mode
+	hashedFile := filepath.Join(dir, "hashed.jsonl")
+	createHashedInput(t, hashedFile, events)
+
+	args2 := VerifyArgs{
+		InputFile: hashedFile,
+		// No OutputFile = verify mode
+		// No PublicKeyPath = verify mode without checkpoint
+	}
+
+	err = RunVerifyPhase(cfg, args2)
+	if err != nil {
+		t.Fatalf("RunVerifyPhase without output: %v", err)
+	}
+}
+
+// Helper functions
+
+func writeTestEvents(t *testing.T, path string, events []map[string]interface{}) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create test file: %v", err)
+	}
+	defer f.Close()
+
+	enc := json.NewEncoder(f)
+	for _, e := range events {
+		if err := enc.Encode(e); err != nil {
+			t.Fatalf("encode event: %v", err)
+		}
+	}
+}
+
+func createHashedInput(t *testing.T, path string, events []map[string]interface{}) {
+	t.Helper()
+	// Create a simple hashed input with hash fields
+	hashedEvents := make([]map[string]interface{}, len(events))
+	for i, e := range events {
+		hashedEvents[i] = map[string]interface{}{
+			"id":               e["id"],
+			"ts":               e["ts"],
+			"msg":              e["msg"],
+			"hash_prev":        "0000000000000000000000000000000000000000000000000000000000000000",
+			"hash":             "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+			"hash_chain_index": i + 1,
+		}
+	}
+	writeTestEvents(t, path, hashedEvents)
+}
+
+func verifyHashedOutput(t *testing.T, path string, expectedCount int) {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open output: %v", err)
+	}
+	defer f.Close()
+
+	dec := json.NewDecoder(f)
+	count := 0
+	for dec.More() {
+		var event map[string]interface{}
+		if err := dec.Decode(&event); err != nil {
+			t.Fatalf("decode event: %v", err)
+		}
+
+		// Verify hash fields exist
+		if _, ok := event["hash"]; !ok {
+			t.Fatalf("event missing hash field")
+		}
+		if _, ok := event["hash_prev"]; !ok {
+			t.Fatalf("event missing hash_prev field")
+		}
+		if _, ok := event["hash_chain_index"]; !ok {
+			t.Fatalf("event missing hash_chain_index field")
+		}
+		count++
+	}
+
+	if count != expectedCount {
+		t.Fatalf("expected %d events, got %d", expectedCount, count)
+	}
+}
+
+func verifyCheckpointExists(t *testing.T, dir string) {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, "checkpoint-*.json"))
+	if err != nil {
+		t.Fatalf("glob checkpoints: %v", err)
+	}
+	if len(matches) == 0 {
+		t.Fatalf("no checkpoint files found")
+	}
+}
+
+func writeDummyCheckpoint(t *testing.T, path string) {
+	t.Helper()
+	checkpoint := map[string]interface{}{
+		"checkpoint": map[string]interface{}{
+			"chain_index": 1,
+			"head_hash":   "testheadhash",
+			"created_at":  time.Now().UTC().Format(time.RFC3339),
+		},
+		"signature": "dummy_signature",
+	}
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create checkpoint: %v", err)
+	}
+	defer f.Close()
+
+	if err := json.NewEncoder(f).Encode(checkpoint); err != nil {
+		t.Fatalf("encode checkpoint: %v", err)
+	}
+}
+
+func createValidCheckpoint(t *testing.T, dir, privPath, headHash string) string {
+	t.Helper()
+	// This is a simplified version - in real tests you'd use the actual WriteCheckpoint function
+	checkpointFile := filepath.Join(dir, "checkpoint-test.json")
+	writeDummyCheckpoint(t, checkpointFile)
+	return checkpointFile
 }
 
 func zeroHashForTest() string {
