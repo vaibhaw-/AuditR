@@ -13,13 +13,19 @@ import (
 
 var (
 	cfgFile string
-	Version = "v0.1"
-	build   = "dev"
+	Version = "v0.4"
+	Build   = "dev"
 	rootCmd = &cobra.Command{
 		Use:   "auditr",
 		Short: "AuditR - tamper-evident DB audit pipeline",
 		Long:  "AuditR: parse, enrich, sign and verify DB audit logs (practicum scope).",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// Skip config loading for commands that don't need it
+			cmdName := cmd.Name()
+			if cmdName == "version" || cmdName == "dict" || cmdName == "validate" || cmdName == "help" {
+				return nil
+			}
+
 			// load config
 			if cfgFile != "" {
 				viper.SetConfigFile(cfgFile)

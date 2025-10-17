@@ -37,7 +37,6 @@ func TestLoad_FullConfig(t *testing.T) {
 	v.Set("hashing.checkpoint_dir", "./checkpoints")
 	v.Set("hashing.checkpoint_interval", "1h")
 	v.Set("signing.private_key_path", "./private.pem")
-	v.Set("signing.algorithm", "ECDSA_P256")
 	v.Set("output.format", "csv")
 	v.Set("output.dir", "./output")
 	v.Set("output.reject_file", "./rejected.jsonl")
@@ -83,9 +82,7 @@ func TestLoad_FullConfig(t *testing.T) {
 	if cfg.Signing.PrivateKeyPath != "./private.pem" {
 		t.Errorf("PrivateKeyPath = %v, want ./private.pem", cfg.Signing.PrivateKeyPath)
 	}
-	if cfg.Signing.Algorithm != "ECDSA_P256" {
-		t.Errorf("Algorithm = %v, want ECDSA_P256", cfg.Signing.Algorithm)
-	}
+	// Algorithm removed; ECDSA P-256 is fixed in implementation
 
 	// Output
 	if cfg.Output.Format != "csv" {

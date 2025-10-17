@@ -10,6 +10,6 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Show AuditR version",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("AuditR %s\n", Version)
+		fmt.Printf("AuditR %s (build %s)\n", Version, Build)
 	},
 }

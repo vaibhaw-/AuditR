@@ -50,7 +50,6 @@ type Config struct {
 	Hashing    HashingCfg    `mapstructure:"hashing"`
 	Signing    struct {
 		PrivateKeyPath string `mapstructure:"private_key_path"`
-		Algorithm      string `mapstructure:"algorithm"`
 	} `mapstructure:"signing"`
 	Output  OutputCfg  `mapstructure:"output"`
 	Input   InputCfg   `mapstructure:"input"`

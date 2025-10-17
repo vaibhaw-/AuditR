@@ -807,6 +807,45 @@ The NDJSON format is compatible with:
 - **Jupyter Notebooks**: For data science analysis and ML-based anomaly detection
 - **Apache Spark**: For large-scale batch processing and analytics
 
+# 📝 Crypto
+
+## Key Management
+
+The verify phase uses ECDSA P-256 for checkpoint signing and verification. When checkpointing is enabled, you must provide a private key for signing. When verifying checkpoints, you need both the public key and the checkpoint file.
+
+### Generating Key Pairs
+
+Generate a new ECDSA P-256 key pair for checkpoint signing:
+
+```bash
+# Generate private key
+openssl ecparam -genkey -name prime256v1 -noout -out private.pem
+
+# Extract public key from private key
+openssl ec -in private.pem -pubout -out public.pem
+
+# Verify the key pair
+openssl ec -in private.pem -text -noout
+openssl ec -in public.pem -pubin -text -noout
+```
+
+### Key Requirements
+
+- **Private Key**: Required when creating checkpoints (hash mode with `--checkpoint` or `hashing.checkpoint_interval: file_end`)
+- **Public Key**: Required when verifying checkpoints (verify mode with `--checkpoint-path`)
+- **Format**: PEM-encoded ECDSA P-256 keys
+- **Algorithm**: ECDSA P-256 (fixed, no algorithm selection)
+
+### Example Usage
+
+```bash
+# Hash mode with checkpointing (requires private key)
+auditr verify --input enriched.ndjson --output hashed.ndjson --checkpoint --private-key private.pem
+
+# Verify mode with checkpoint validation (requires public key + checkpoint file)
+auditr verify --input hashed.ndjson --public-key public.pem --checkpoint-path ./checkpoints/checkpoint-*.json
+```
+
 # 📝 Future Enhancements
 
 ## Planned Features
