@@ -526,16 +526,17 @@ func TestDetectBulkOperation(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if evt.Enrichment == nil {
-				if tt.want.isBulk {
-					t.Errorf("expected bulk operation enrichment, got nil")
-				}
+			gotBulk := evt.Bulk != nil && *evt.Bulk
+			gotType := ""
+			if evt.BulkType != nil {
+				gotType = *evt.BulkType
+			}
+			gotFull := evt.FullTableRead != nil && *evt.FullTableRead
+
+			if !gotBulk && tt.want.isBulk {
+				t.Errorf("expected bulk operation, got nil")
 				return
 			}
-
-			gotBulk, _ := evt.Enrichment["bulk_operation"].(bool)
-			gotType, _ := evt.Enrichment["bulk_type"].(string)
-			gotFull, _ := evt.Enrichment["full_table_read"].(bool)
 
 			if gotBulk != tt.want.isBulk {
 				t.Errorf("bulk_operation = %v, want %v", gotBulk, tt.want.isBulk)

@@ -13,6 +13,11 @@ type Event struct {
 	QueryType string  `json:"query_type"`
 	RawQuery  *string `json:"raw_query,omitempty"` // only if EmitRaw enabled
 
+	// Bulk operation detection (populated by parser)
+	Bulk          *bool   `json:"bulk,omitempty"`
+	BulkType      *string `json:"bulk_type,omitempty"` // "insert", "export", "import"
+	FullTableRead *bool   `json:"full_table_read,omitempty"`
+
 	// pgAudit-specific structured fields (optional, populated only for Postgres)
 	AuditClass    *string `json:"audit_class,omitempty"`
 	SessionID     *int    `json:"session_id,omitempty"`
@@ -26,7 +31,7 @@ type Event struct {
 	ConnectionID *int `json:"connection_id,omitempty"`
 	Status       *int `json:"status,omitempty"`
 
-	// Enrichment (bulk operation flags, sensitivity, risk, etc.)
+	// Enrichment (sensitivity, risk, and other enrichment data)
 	Enrichment map[string]interface{} `json:"enrichment,omitempty"`
 
 	// DB-specific extras that don't warrant a first-class field.

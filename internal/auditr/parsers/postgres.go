@@ -289,7 +289,15 @@ func (p *PostgresParser) parseTextLine(line string) (*Event, error) {
 
 	// Check for bulk operations
 	if enrichment := detectBulkOperation(q); enrichment != nil {
-		evt.Enrichment = enrichment
+		if bulk, ok := enrichment["bulk_operation"].(bool); ok && bulk {
+			evt.Bulk = &bulk
+			if bulkType, ok := enrichment["bulk_type"].(string); ok {
+				evt.BulkType = &bulkType
+			}
+			if fullTable, ok := enrichment["full_table_read"].(bool); ok {
+				evt.FullTableRead = &fullTable
+			}
+		}
 	}
 
 	// --- CSV parsing for pgAudit structured fields ---
@@ -458,6 +466,16 @@ func extractDBFromLine(line string) string {
 // - SELECT INTO OUTFILE/DUMPFILE: MySQL-style data export
 // - Multi-row INSERT: Multiple VALUES clauses or multiple value sets
 // - Full table SELECT: SELECT without WHERE clause
+//
+// Multi-row INSERT Detection Logic:
+// A bulk INSERT operation is detected when:
+// 1. Multiple VALUES clauses: "INSERT ... VALUES (...), VALUES (...)" - rare but possible
+// 2. Multiple value sets in single VALUES: "INSERT ... VALUES (1,2), (3,4), (5,6)"
+//   - Detected by patterns "),(" or "), (" (with space)
+//   - Note: We do NOT use comma counting as single-row INSERTs with many columns
+//     can have many commas (e.g., 15 columns = 14 commas) but are not bulk operations
+//
+// 3. Multiple INSERT statements in one query (handled by VALUES count > 1)
 func detectBulkOperation(query string) map[string]interface{} {
 	log := logger.L()
 	up := strings.ToUpper(query)
@@ -494,17 +512,24 @@ func detectBulkOperation(query string) map[string]interface{} {
 		}
 	}
 
-	// Multi-row INSERT
+	// Multi-row INSERT detection
 	if strings.HasPrefix(up, "INSERT") && strings.Contains(up, "VALUES") {
-		// Check for multiple value sets
+		// Count VALUES clauses - multiple VALUES clauses indicate bulk operation
+		// Example: "INSERT ... VALUES (...), VALUES (...)" (rare but possible)
 		valuesCount := strings.Count(up, "VALUES")
-		commaCount := strings.Count(up, ",")
-		hasMultipleValueSets := strings.Contains(up, "),(")
-		isMultiRow := hasMultipleValueSets || valuesCount > 1 || commaCount > valuesCount*2
+
+		// Check for multiple value sets within a single VALUES clause
+		// Examples: "VALUES (1,2), (3,4), (5,6)" or "VALUES (1,2), (3,4), (5,6)"
+		// We check both "),(" and "), (" patterns as SQL formatting varies
+		hasMultipleValueSets := strings.Contains(up, "),(") || strings.Contains(up, "), (")
+
+		// A query is considered bulk if it has multiple VALUES clauses OR multiple value sets
+		// Note: We deliberately do NOT use comma counting as single-row INSERTs with many
+		// columns can have many commas but are not bulk operations
+		isMultiRow := hasMultipleValueSets || valuesCount > 1
 
 		log.Debugw("checking INSERT for bulk operation",
 			"values_count", valuesCount,
-			"comma_count", commaCount,
 			"has_multiple_value_sets", hasMultipleValueSets,
 			"is_multi_row", isMultiRow)
 

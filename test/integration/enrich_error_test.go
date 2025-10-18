@@ -150,11 +150,11 @@ invalid json line here
 
 	t.Run("mixed_valid_and_invalid", func(t *testing.T) {
 		// Mix of valid events, invalid JSON, and edge cases
-		testInput := `{"event_id": "valid-1", "timestamp": "2025-01-01T12:00:00Z", "db_system": "postgres", "query_type": "INSERT", "raw_query": "INSERT INTO healthcare.patient (ssn, email) VALUES ('123-45-6789', 'test@example.com');"}
+		testInput := `{"event_id": "valid-1", "timestamp": "2025-01-01T12:00:00Z", "db_system": "postgres", "query_type": "INSERT", "raw_query": "INSERT INTO healthcare.patient (ssn, email) VALUES ('123-45-6789', 'test@example.com');", "bulk": false}
 malformed line 1
-{"event_id": "valid-2", "timestamp": "2025-01-01T12:01:00Z", "db_system": "postgres", "query_type": "SELECT", "raw_query": "SELECT * FROM healthcare.patient;"}
+{"event_id": "valid-2", "timestamp": "2025-01-01T12:01:00Z", "db_system": "postgres", "query_type": "SELECT", "raw_query": "SELECT * FROM healthcare.patient;", "bulk": true, "bulk_type": "export", "full_table_read": true}
 {broken json
-{"event_id": "valid-3", "timestamp": "2025-01-01T12:02:00Z", "db_system": "postgres", "query_type": "SELECT", "raw_query": "SELECT version();"}`
+{"event_id": "valid-3", "timestamp": "2025-01-01T12:02:00Z", "db_system": "postgres", "query_type": "SELECT", "raw_query": "SELECT version();", "bulk": false}`
 
 		inputFile := filepath.Join(projectRoot, fmt.Sprintf("test_mixed_input_%d.jsonl", time.Now().Unix()))
 		err := os.WriteFile(inputFile, []byte(testInput), 0644)

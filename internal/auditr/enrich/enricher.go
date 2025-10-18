@@ -175,14 +175,6 @@ func (e *Enricher) ProcessEvent(event map[string]interface{}) EnrichmentResult {
 		// Add risk level
 		enrichedEvent["risk_level"] = riskLevel
 
-		// Add bulk operation flag
-		if queryRefs.IsBulk {
-			enrichedEvent["bulk"] = true
-			if queryRefs.BulkType != "" {
-				enrichedEvent["bulk_type"] = queryRefs.BulkType
-			}
-		}
-
 		// Add debug information if requested
 		if e.options.Debug {
 			debugInfo := map[string]interface{}{

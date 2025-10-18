@@ -265,14 +265,13 @@ func TestEnricher_ProcessEvent(t *testing.T) {
 			checkFunc: func(t *testing.T, result EnrichmentResult) {
 				assert.True(t, result.ShouldEmit)
 
-				// Should detect bulk operation
-				bulk, hasBulk := result.EnrichedEvent["bulk"].(bool)
-				assert.True(t, hasBulk)
-				assert.True(t, bulk)
+				// Bulk detection is now handled by parsers, not enricher
+				// No bulk fields should be present in enriched output
+				_, hasBulk := result.EnrichedEvent["bulk"]
+				assert.False(t, hasBulk)
 
-				bulkType, hasBulkType := result.EnrichedEvent["bulk_type"].(string)
-				assert.True(t, hasBulkType)
-				assert.Equal(t, "select", bulkType)
+				_, hasBulkType := result.EnrichedEvent["bulk_type"]
+				assert.False(t, hasBulkType)
 			},
 		},
 		{
@@ -518,11 +517,13 @@ func TestEnricher_RealWorldScenarios(t *testing.T) {
 				assert.Equal(t, []string{"PII"}, result.Categories)
 				assert.Equal(t, "medium", result.RiskLevel)
 
-				// Should be marked as bulk
-				bulk, _ := result.EnrichedEvent["bulk"].(bool)
-				assert.True(t, bulk)
-				bulkType, _ := result.EnrichedEvent["bulk_type"].(string)
-				assert.Equal(t, "export", bulkType)
+				// Bulk detection is now handled by parsers, not enricher
+				// No bulk fields should be present in enriched output
+				_, hasBulk := result.EnrichedEvent["bulk"]
+				assert.False(t, hasBulk)
+
+				_, hasBulkType := result.EnrichedEvent["bulk_type"]
+				assert.False(t, hasBulkType)
 			},
 		},
 		{

@@ -159,14 +159,17 @@ func TestEnrichIntegration_BulkOperations(t *testing.T) {
 	binaryPath := buildAuditrBinary(t, projectRoot)
 	defer os.Remove(binaryPath)
 
-	// Create test events with known bulk operations
+	// Create test events with known bulk operations (bulk fields pre-populated from parse step)
 	bulkEvents := []map[string]interface{}{
 		{
-			"event_id":   "bulk-1",
-			"timestamp":  "2025-01-01T12:00:00Z",
-			"db_system":  "postgres",
-			"query_type": "SELECT",
-			"raw_query":  "SELECT * FROM healthcare.patient",
+			"event_id":        "bulk-1",
+			"timestamp":       "2025-01-01T12:00:00Z",
+			"db_system":       "postgres",
+			"query_type":      "SELECT",
+			"raw_query":       "SELECT * FROM healthcare.patient",
+			"bulk":            true,
+			"bulk_type":       "export",
+			"full_table_read": true,
 		},
 		{
 			"event_id":   "bulk-2",
@@ -174,6 +177,8 @@ func TestEnrichIntegration_BulkOperations(t *testing.T) {
 			"db_system":  "postgres",
 			"query_type": "COPY",
 			"raw_query":  "COPY healthcare.patient TO '/tmp/patients.csv' WITH CSV",
+			"bulk":       true,
+			"bulk_type":  "export",
 		},
 		{
 			"event_id":   "bulk-3",
@@ -181,6 +186,8 @@ func TestEnrichIntegration_BulkOperations(t *testing.T) {
 			"db_system":  "mysql",
 			"query_type": "SELECT",
 			"raw_query":  "LOAD DATA INFILE '/tmp/data.csv' INTO TABLE healthcare_patient",
+			"bulk":       true,
+			"bulk_type":  "import",
 		},
 		{
 			"event_id":   "normal-1",

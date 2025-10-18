@@ -147,14 +147,14 @@ func TestMySQLParser_BulkOps(t *testing.T) {
 		}
 		evt := p.eventFromPerconaJSON(rec)
 		if c.wantBulk {
-			if evt.Enrichment == nil || evt.Enrichment["bulk_operation"] != true {
-				t.Errorf("sql=%q expected bulk_operation true", c.sql)
+			if evt.Bulk == nil || !*evt.Bulk {
+				t.Errorf("sql=%q expected bulk=true", c.sql)
 			}
-			if evt.Enrichment["bulk_type"] != c.wantType {
-				t.Errorf("sql=%q expected bulk_type %q got %v", c.sql, c.wantType, evt.Enrichment["bulk_type"])
+			if evt.BulkType != nil && *evt.BulkType != c.wantType {
+				t.Errorf("sql=%q expected bulk_type %q got %v", c.sql, c.wantType, *evt.BulkType)
 			}
-		} else if evt.Enrichment != nil {
-			t.Errorf("sql=%q expected no enrichment, got %v", c.sql, evt.Enrichment)
+		} else if evt.Bulk != nil && *evt.Bulk {
+			t.Errorf("sql=%q expected no bulk operation, got bulk=true", c.sql)
 		}
 	}
 }

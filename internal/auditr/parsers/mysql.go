@@ -135,10 +135,14 @@ func (p *MySQLParser) eventFromPerconaJSON(rec map[string]interface{}) *Event {
 
 	// Bulk detection
 	if bulk, btype, full := detectMySQLBulkOp(sql); bulk {
-		evt.Enrichment = map[string]interface{}{
-			"bulk_operation":  true,
-			"bulk_type":       btype,
-			"full_table_read": full,
+		bulkVal := true
+		evt.Bulk = &bulkVal
+		if btype != "" {
+			evt.BulkType = &btype
+		}
+		if full {
+			fullVal := true
+			evt.FullTableRead = &fullVal
 		}
 	}
 
@@ -174,10 +178,14 @@ func (p *MySQLParser) eventFromPerconaXML(rec auditRecordXML) *Event {
 	}
 
 	if bulk, btype, full := detectMySQLBulkOp(rec.SQLText); bulk {
-		evt.Enrichment = map[string]interface{}{
-			"bulk_operation":  true,
-			"bulk_type":       btype,
-			"full_table_read": full,
+		bulkVal := true
+		evt.Bulk = &bulkVal
+		if btype != "" {
+			evt.BulkType = &btype
+		}
+		if full {
+			fullVal := true
+			evt.FullTableRead = &fullVal
 		}
 	}
 
@@ -275,8 +283,16 @@ func mapCommandClassToQueryType(cmdClass, sql, recName string, status *int) stri
 // It looks for several patterns that indicate bulk data operations:
 // - LOAD DATA INFILE: MySQL's native data import
 // - INTO OUTFILE/DUMPFILE: MySQL's data export
-// - Multi-row INSERT: Multiple value sets with ),(
+// - Multi-row INSERT: Multiple value sets or multiple VALUES clauses
 // - Full table SELECT: SELECT without WHERE clause
+//
+// Multi-row INSERT Detection Logic:
+// A bulk INSERT operation is detected when:
+// 1. Multiple VALUES clauses: "INSERT ... VALUES (...), VALUES (...)" - rare but possible
+// 2. Multiple value sets in single VALUES: "INSERT ... VALUES (1,2), (3,4), (5,6)"
+//   - Detected by patterns "),(" or "), (" (with space)
+//   - Note: We do NOT use comma counting as single-row INSERTs with many columns
+//     can have many commas (e.g., 15 columns = 14 commas) but are not bulk operations
 func detectMySQLBulkOp(sql string) (bool, string, bool) {
 	log := logger.L()
 
@@ -300,12 +316,28 @@ func detectMySQLBulkOp(sql string) (bool, string, bool) {
 		return true, "export", true
 	}
 
-	// Multi-row INSERT
-	if strings.HasPrefix(up, "INSERT") {
-		hasMultipleValues := strings.Contains(up, "),(")
+	// Multi-row INSERT detection
+	if strings.HasPrefix(up, "INSERT") && strings.Contains(up, "VALUES") {
+		// Count VALUES clauses - multiple VALUES clauses indicate bulk operation
+		// Example: "INSERT ... VALUES (...), VALUES (...)" (rare but possible)
+		valuesCount := strings.Count(up, "VALUES")
+
+		// Check for multiple value sets within a single VALUES clause
+		// Examples: "VALUES (1,2), (3,4), (5,6)" or "VALUES (1,2), (3,4), (5,6)"
+		// We check both "),(" and "), (" patterns as SQL formatting varies
+		hasMultipleValueSets := strings.Contains(up, "),(") || strings.Contains(up, "), (")
+
+		// A query is considered bulk if it has multiple VALUES clauses OR multiple value sets
+		// Note: We deliberately do NOT use comma counting as single-row INSERTs with many
+		// columns can have many commas but are not bulk operations
+		isMultiRow := hasMultipleValueSets || valuesCount > 1
+
 		log.Debugw("checking INSERT for bulk operation",
-			"has_multiple_values", hasMultipleValues)
-		if hasMultipleValues {
+			"values_count", valuesCount,
+			"has_multiple_value_sets", hasMultipleValueSets,
+			"is_multi_row", isMultiRow)
+
+		if isMultiRow {
 			log.Debugw("detected multi-row INSERT")
 			return true, "insert", false
 		}

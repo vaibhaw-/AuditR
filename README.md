@@ -14,242 +14,44 @@ Together they form a complete demo pipeline:
 # 1. Build the tools
 make
 
-# 2. Generate and load test data
+# 2. Generate test data and run workload (see LoadR docs for details)
 ./bin/loadr load --config cmd/loadr/config/load_pg.yaml
 createdb practicumdb && psql -d practicumdb -f seed_pg.sql
-
-# 3. Run workload to generate audit logs
 ./bin/loadr run --config cmd/loadr/config/run_pg.yaml
 
-# 4. Parse audit logs
+# 3. Parse audit logs
 ./bin/auditr parse --db postgres --input /path/to/pgaudit.log --output parsed.ndjson --emit-raw
 
-# 5. Extract schema
+# 4. Extract schema and enrich with sensitivity detection
 psql -d practicumdb -c "SELECT current_database(), schemaname, tablename, attname, format_type(atttypid, atttypmod) FROM pg_attribute a JOIN pg_class c ON a.attrelid = c.oid JOIN pg_namespace n ON c.relnamespace = n.oid JOIN pg_tables t ON c.relname = t.tablename AND n.nspname = t.schemaname WHERE a.attnum > 0 AND NOT a.attisdropped ORDER BY schemaname, tablename, attname;" --csv > schema.csv
-
-# 6. Enrich with sensitivity detection
 ./bin/auditr enrich --schema schema.csv --dict cmd/auditr/config/sensitivity_dict_extended.json --risk cmd/auditr/config/risk_scoring.json --input parsed.ndjson --output enriched.ndjson --emit-unknown
 
-# 7. Analyze results
+# 5. Analyze results
 jq '.risk_level' enriched.ndjson | sort | uniq -c
 ```
 
+**📖 For detailed LoadR setup and configuration, see [LoadR Documentation](docs/loadr.md)**
+
 # 📋 Prerequisites
-Before using AuditR and LoadR, ensure the following:
 
-PostgreSQL 16 with:
-- pgAudit extension installed and enabled (shared_preload_libraries = 'pgaudit').
-- citext extension installed in your target DB (CREATE EXTENSION citext;).
+**AuditR Requirements:**
+- PostgreSQL 16 with pgAudit extension installed and enabled
+- MySQL 8 with Percona Audit Log Plugin
 
-MySQL 8 with:
-- Percona Audit Log Plugin
+**LoadR Requirements:**
+- See [LoadR Documentation](docs/loadr.md) for detailed setup instructions
 
 # 🚀 LoadR: Data & Workload Generator
-## Database Schema
 
-The database schema models a simplified healthcare, pharmacy, and payments system.  
-It is designed to include realistic **relationships** and **sensitive data types** for workload simulation and auditing.
+LoadR is a synthetic data and workload generator for PostgreSQL and MySQL, used to produce realistic queries that exercise PII, PHI, and financial data fields for testing AuditR's audit log processing capabilities.
 
-### Highlights
-- **Healthcare**: Patients and their encounters (PHI + PII).  
-- **Pharmacy**: Drugs, orders, and order items (joins to patients and payments).  
-- **Payments**: Payment methods linked to patients (Financial data).  
-- **Foreign keys** ensure consistency across schemas in both PostgreSQL and MySQL.  
-- **Sensitive fields** are explicitly marked and color-coded in the diagram.
+**📖 [Complete LoadR Documentation →](docs/loadr.md)**
 
-### Sensitivity Legend
-- 🟦 **PII**: Personally Identifiable Information  
-- 🟩 **PHI**: Protected Health Information  
-- 🟧 **Financial**: Payment / Financial Data  
-
-### ER Diagram
-![Schema Diagram](docs/schema.png)
-
-*(SVG version available in `docs/schema.svg` for zoomable detail.)*
-
-## Data Generation
-### Data Generation Phase (loadr load)
-LoadR generates ready-to-import SQL seed files containing:
-
-#### Schema (DDL)
-- **Postgres**: creates healthcare, pharmacy, and payments schemas.
-- **MySQL** : creates one DB (practicumdb) with prefixed table names.
-
-#### Indexes
-- On common PII/PHI/Financial fields for efficient lookups.
-
-#### Synthetic Data
-- Patients, encounters, drugs, orders, payments.
-- Uses [gofakeit](https://github.com/brianvoe/gofakeit) and curated lists (see common_data.go).
-- Consistent FKs across tables (patient_ids, order_ids, drug_ids).
-
-#### Database Users
-- Creates multiple users (appuser1..N) with password.
-- Grants them SELECT/INSERT/UPDATE/DELETE on all tables.
- 
-### Example Config (`config_pg.yaml`)
-
-```yaml
-driver: postgres            # Target driver: postgres or mysql
-database: practicumdb       # Database name
-output: seed_pg.sql         # Output SQL file
-seed: 42                    # RNG seed for reproducibility
-
-patients: 1000              # Number of patients
-encounters: 2000            # Number of encounters
-drugs: 200                  # Number of drugs
-orders: 1500                # Number of pharmacy orders
-dbUsers: 5                  # Number of database users (appuser1..5)
-```
-
-### Example Config (`config_mysql.yaml`)
-```yaml
-driver: mysql
-database: practicumdb
-output: seed_mysql.sql
-seed: 42
-
-patients: 1000
-encounters: 2000
-drugs: 200
-orders: 1500
-dbUsers: 5
-```
-
-### Usage
-```bash
-make
-
-# Build binaries
-make
-
-# Generate Postgres seed SQL
-./bin/loadr load --config config_pg.yaml
-
-# Generate MySQL seed SQL
-./bin/loadr load --config config_mysql.yaml
-
-```
-This produces `seed_pg.sql` or `seed_mysql.sql` containing:
-
-- `DROP/CREATE SCHEMA` (Postgres) or `DROP/CREATE DATABASE` (MySQL).
-- `CREATE TABLE` statements with comments annotating PII, PHI, Financial fields.
-- `INSERT` statements with synthetic values.
-- `CREATE INDEX` statements on key fields.
-- `CREATE USER` and `GRANT` statements for multi-user audit simulation.
-
-### Import into DB:
-``` bash
-# Postgres
-createdb -U vaibhaw practicumdb
-psql -U <admin_user> -d practicumdb -f seed_pg.sql
-
-# MySQL
-mysql -u <admin_user> -p <pwd> < seed_mysql.sql
-```
-### 🔍 Verification
-
-After seeding, you can verify your data and users with:
-
-```bash
-# Postgres
-psql -U <user> -d practicumdb -f verify_pg.sql
-
-# MySQL
-mysql -u <user> -p practicumdb < verify_mysql.sql
-```
-The verify scripts are available under `/scripts`.
-## Workload Generation
-### Workload Phase (`loadr run`)
-
-After seeding, **LoadR** can simulate realistic database workloads that generate audit logs. Queries are executed directly against the DB under multiple app users.
-
-#### Features
-- **Operation mix**: configurable ratio of `SELECT` (reads) vs `UPDATE` (writes).  
-- **Sensitivity mix**: configurable ratio of queries targeting sensitive-only (PII/Financial), mixed (PII + PHI + Financial), and non-sensitive data.  
-- **User simulation**: queries are executed under different users (`appuser1..N`) to simulate multiple actors.  
-- **Annotations**: every query includes identifying comments (run ID, op type, sensitivity, user, timestamp) to aid log analysis.  
-- **Concurrency**: configurable workers and total operations; RNG seed ensures reproducibility.
-
-#### Example Config (`run_pg.yaml`)
-```yaml
-driver: postgres
-database: practicumdb
-
-users:
-  - username: appuser1
-    password: <>
-  - username: appuser2
-    password: <>
-  - username: appuser3
-    password: <>
-  - username: appuser4
-    password: <>
-  - username: appuser5
-    password: <>
-
-seed: 42
-runId: pg_demo001
-
-concurrency: 5
-totalOps: 200
-
-mix:                      # Operation mix
-  select: 0.7
-  update: 0.3
-
-sensitivity:              # Sensitivity mix
-  sensitive_only: 0.4
-  mixed: 0.4
-  non_sensitive_only: 0.2
-
-host: 127.0.0.1
-port: 5432
-```
-### Usage
-```bash
-# Run Postgres workload
-./bin/loadr run --config run_pg.yaml
-
-# Run MySQL workload
-./bin/loadr run --config run_mysql.yaml
-```
-This will
-- Connect as multiple users (`appuserN`).
-- Execute queries per the configured workload.
-- Insert identifying comments in each query for downstream parsing by AuditR.
-- Generate realistic audit log entries in pgAudit (Postgres) or Percona Audit Plugin (MySQL).
-
-#### Sample Annotated Query
-Workload queries are annotated to make audit logs self-describing:
-```sql
-/* run_id=pg_demo001 op=select sensitivity=mixed user=appuser3 ts=2025-09-13T10:00:00Z */
-SELECT p.email, e.diagnosis, o.total_price, pm.card_last4
-FROM healthcare.patient p
-JOIN healthcare.encounter e ON p.patient_id = e.patient_id
-JOIN pharmacy.pharmacy_order o ON p.patient_id = o.patient_id
-JOIN payments.payment_method pm ON p.patient_id = pm.patient_id
-WHERE p.patient_id = 'f1a2b3c4-5678-90ab-cdef-1234567890ab'
-LIMIT 5;
-```
-#### 🔍 Verification after run
-Once the workload completes:
-1. **Check audit logs** :
-    -  Postgres: queries should appear in pgAudit logs, including the identifying comments.
-    - MySQL: queries should appear in the Percona Audit Log Plugin output.
-2. **Confirm multi-user activity**:
-    - Ensure queries in logs show different appuserN roles.
-3. **Verify updates**:
-    - Run queries in the DB to confirm changes, e.g.:
-    ```sql
-    SELECT phone_number FROM healthcare.patient LIMIT 5;
-    SELECT stock_qty FROM pharmacy.drug LIMIT 5;
-    ```
-4. **Look for annotations**:
-    - Every logged query should include the `/* run_id=... */` comment block for traceability.
-    - Likely file path on MacOS Homebrew:
-        - **Postgres** : `/opt/homebrew/var/log/postgresql@16.log` 
-        - **MySQL** : `/opt/homebrew/var/mysql/audit.log`
+LoadR provides:
+- **Database Schema**: Healthcare, pharmacy, and payments system with realistic relationships and sensitive data types
+- **Data Generation**: Synthetic data creation with configurable volume and user simulation
+- **Workload Simulation**: Realistic query patterns with sensitivity mix and multi-user concurrency
+- **Audit Log Generation**: Annotated queries that produce comprehensive audit logs for testing
 
 # 🔍 AuditR: Audit Log Enricher
 AuditR is a CLI tool that processes database audit logs into tamper-evident, enriched compliance reports.
@@ -258,8 +60,8 @@ AuditR is a CLI tool that processes database audit logs into tamper-evident, enr
 
 * **Parse** PostgreSQL pgAudit or MySQL Percona Audit Log Plugin logs
 * **Normalize** into NDJSON format with structured event data
+* **Detect** bulk operations (SELECT *, COPY, LOAD DATA) automatically during parsing
 * **Enrich** with schema metadata, sensitivity classification, and risk scoring
-* **Detect** bulk operations (SELECT *, COPY, LOAD DATA) automatically
 * **Classify** sensitive data (PII, PHI, Financial) using regex-based dictionaries
 * **Score** risk levels (low, medium, high, critical) based on data combinations
 * **Handle errors** gracefully - never lose data, emit structured ERROR events
@@ -308,7 +110,7 @@ When troubleshooting, you can enable debug logging to see:
 
 * **Parser Details**:
   - SQL query extraction and classification
-  - Bulk operation detection
+  - Bulk operation detection (COPY, LOAD DATA, multi-row INSERT, full table SELECT)
   - Authentication events
   - Parsing decisions and context
 
@@ -384,7 +186,12 @@ auditr parse --db postgres --input pgaudit.log --follow --emit-raw
 ```
 
 **Input**: Raw audit log files from pgAudit or Percona Audit Plugin  
-**Output**: NDJSON with structured events like:
+**Output**: NDJSON with structured events including bulk operation detection:
+
+**Bulk Operation Detection**: The parse step automatically detects and flags bulk operations:
+- `bulk`: `true`/`false` - whether the operation is a bulk data operation
+- `bulk_type`: `"insert"`/`"export"`/`"import"` - type of bulk operation
+- `full_table_read`: `true`/`false` - whether the operation reads entire tables (SELECT * without WHERE)
 
 ```json
 {
@@ -393,13 +200,14 @@ auditr parse --db postgres --input pgaudit.log --follow --emit-raw
   "db_system": "postgres",
   "db_user": "appuser1",
   "query_type": "SELECT",
-  "raw_query": "SELECT ssn, email FROM healthcare.patient WHERE patient_id = '123';"
+  "raw_query": "SELECT ssn, email FROM healthcare.patient WHERE patient_id = '123';",
+  "bulk": false
 }
 ```
 
 ### 2. Enrich Command
 
-Add sensitivity classification, risk scoring, and bulk operation detection:
+Add sensitivity classification and risk scoring:
 
 ```bash
 # Basic enrichment
@@ -422,7 +230,7 @@ auditr enrich \
 ```
 
 **Input**: NDJSON from parse command + schema CSV + sensitivity dictionary + risk scoring policy  
-**Output**: Enriched NDJSON with sensitivity and risk information:
+**Output**: Enriched NDJSON with sensitivity and risk information (bulk fields are preserved from parse step):
 
 ```json
 {
@@ -597,7 +405,6 @@ AuditR uses JSON dictionaries to detect sensitive fields with regex-based matchi
 * **Sample patterns** for additional validation (optional)
 * **Negative rules** prevent false positives on ID fields, etc.
 * **Risk combinations** handle multiple sensitivity categories
-* **Bulk operation detection** for SELECT *, COPY, LOAD DATA operations
 
 ### Dictionary Validation
 
@@ -659,13 +466,13 @@ Here's a complete walkthrough of using LoadR and AuditR together:
 # Build the tools
 make
 
-# Generate PostgreSQL seed data
+# Generate PostgreSQL seed data and import (see LoadR docs for details)
 ./bin/loadr load --config cmd/loadr/config/load_pg.yaml
-
-# Import into database
 createdb -U postgres practicumdb
 psql -U postgres -d practicumdb -f seed_pg.sql
 ```
+
+**📖 For detailed LoadR setup, see [LoadR Documentation](docs/loadr.md)**
 
 ## Step 2: Run Workload (Generate Audit Logs)
 
@@ -677,8 +484,6 @@ psql -U postgres -d practicumdb -f seed_pg.sql
 
 # Run synthetic workload
 ./bin/loadr run --config cmd/loadr/config/run_pg.yaml
-
-# This generates audit logs in PostgreSQL log files
 ```
 
 ## Step 3: Parse Audit Logs
@@ -788,6 +593,8 @@ After running the complete pipeline, you should see:
   }
 }
 ```
+
+**Note**: The `bulk`, `bulk_type`, and `full_table_read` fields are populated during the parse step and preserved through enrichment.
 
 # 📊 Visualization
 

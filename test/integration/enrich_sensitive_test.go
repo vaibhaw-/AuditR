@@ -44,11 +44,14 @@ func TestEnrichIntegration_SensitiveData(t *testing.T) {
 			"raw_query":  "SELECT diagnosis, treatment FROM healthcare.encounter WHERE patient_id = '123';",
 		},
 		{
-			"event_id":   "test-bulk-1",
-			"timestamp":  "2025-01-01T12:02:00Z",
-			"db_system":  "postgres",
-			"query_type": "SELECT",
-			"raw_query":  "SELECT * FROM healthcare.patient;",
+			"event_id":        "test-bulk-1",
+			"timestamp":       "2025-01-01T12:02:00Z",
+			"db_system":       "postgres",
+			"query_type":      "SELECT",
+			"raw_query":       "SELECT * FROM healthcare.patient;",
+			"bulk":            true,
+			"bulk_type":       "export",
+			"full_table_read": true,
 		},
 		{
 			"event_id":   "test-normal-1",
@@ -145,7 +148,7 @@ func TestEnrichIntegration_SensitiveData(t *testing.T) {
 	bulk, exists := bulkEvent["bulk"]
 	if exists && bulk.(bool) {
 		bulkType := bulkEvent["bulk_type"].(string)
-		assert.Equal(t, "select", bulkType, "Should detect SELECT * as bulk operation")
+		assert.Equal(t, "export", bulkType, "Should detect SELECT * as bulk export operation")
 		t.Logf("✅ Bulk Detection: Detected bulk operation type %s", bulkType)
 	} else {
 		t.Logf("⚠️  Bulk operation not detected for SELECT *")
