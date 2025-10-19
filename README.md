@@ -6,7 +6,7 @@ This repository contains two complementary tools designed for the Practicum caps
 - **LoadR** → Synthetic data + workload generator for PostgreSQL/MySQL, used to produce realistic queries that exercise PII, PHI, and financial data fields.
 
 Together they form a complete demo pipeline:  
-**LoadR → Database (pgAudit / Percona) → Audit logs → AuditR → Enriched compliance reports**
+**LoadR → Database (pgAudit / Percona) → Audit logs → AuditR (parse → enrich → verify → query) → Compliance reports**
 
 ## 🚀 Quick Start
 
@@ -26,8 +26,9 @@ createdb practicumdb && psql -d practicumdb -f seed_pg.sql
 psql -d practicumdb -c "SELECT current_database(), schemaname, tablename, attname, format_type(atttypid, atttypmod) FROM pg_attribute a JOIN pg_class c ON a.attrelid = c.oid JOIN pg_namespace n ON c.relnamespace = n.oid JOIN pg_tables t ON c.relname = t.tablename AND n.nspname = t.schemaname WHERE a.attnum > 0 AND NOT a.attisdropped ORDER BY schemaname, tablename, attname;" --csv > schema.csv
 ./bin/auditr enrich --schema schema.csv --dict cmd/auditr/config/sensitivity_dict_extended.json --risk cmd/auditr/config/risk_scoring.json --input parsed.ndjson --output enriched.ndjson --emit-unknown
 
-# 5. Analyze results
-jq '.risk_level' enriched.ndjson | sort | uniq -c
+# 5. Query and analyze results
+./bin/auditr query --input enriched.ndjson --sensitivity PII --summary
+./bin/auditr query --input enriched.ndjson --bulk-type export --summary
 ```
 
 **📖 For detailed LoadR setup and configuration, see [LoadR Documentation](docs/loadr.md)**
@@ -64,6 +65,8 @@ AuditR is a CLI tool that processes database audit logs into tamper-evident, enr
 * **Enrich** with schema metadata, sensitivity classification, and risk scoring
 * **Classify** sensitive data (PII, PHI, Financial) using regex-based dictionaries
 * **Score** risk levels (low, medium, high, critical) based on data combinations
+* **Query** and filter enriched audit logs with advanced filtering capabilities
+* **Summarize** audit data with comprehensive statistics and breakdowns
 * **Handle errors** gracefully - never lose data, emit structured ERROR events
 * **Log comprehensively** with configurable output levels and run summaries
 * **Support** both PostgreSQL and MySQL audit log formats
@@ -167,6 +170,7 @@ Available Commands:
   parse       Convert raw DB audit logs → NDJSON events
   enrich      Enrich parsed audit events with sensitivity classification and risk scoring
   verify      Compute/validate hash chain, generate/verify checkpoints
+  query       Filter and summarize enriched or hashed audit logs
   dict        Validate sensitivity dictionaries and risk scoring configs
   version     Show AuditR version
 ```
@@ -300,7 +304,57 @@ Notes:
 - Auto-checkpointing: if `hashing.checkpoint_interval: file_end` in config, a checkpoint is written at the end of each hash run without needing `--checkpoint`.
 - Multi-file continuity: the chain continues across runs using `hashing.state_file`. Verifying files independently may flag the first event of a later file unless you verify the concatenated stream or reset state.
 
-### 4. Schema CSV Format
+### 4. Query Command
+
+Filter and summarize enriched or hashed audit logs for compliance reporting and analysis:
+
+```bash
+# Filter PII-related events from last 7 days
+auditr query --input enriched.ndjson --sensitivity PII --last 7d --summary
+
+# Find all bulk operations by specific user
+auditr query --input hashed.ndjson --user appuser3 --bulk
+
+# Filter only export operations
+auditr query --input hashed.ndjson --bulk-type export
+
+# Find events touching specific sensitive fields
+auditr query --input enriched.ndjson --filter email,ssn,card_last4
+
+# High-risk events summary
+auditr query --input enriched.ndjson --sensitivity PII,PHI,Financial --summary
+
+# Export filtered events to file
+auditr query --input hashed.ndjson --sensitivity PII --output pii_events.ndjson
+```
+
+**Key Features:**
+- **Multiple Filter Types**: Filter by sensitivity categories, users, IP addresses, query types, bulk operations, time ranges
+- **Bulk Operation Filtering**: Filter by general bulk operations (`--bulk`) or specific types (`--bulk-type export`)
+- **Time-based Filtering**: Filter by absolute time (`--since`) or relative time (`--last 7d`, `--last 24h`)
+- **Summary Mode**: Generate aggregated statistics instead of full events
+- **Streaming Processing**: Efficiently processes large audit log files
+- **No Config Required**: Runs standalone without config.yaml
+
+**Filter Options:**
+- `--sensitivity PII,PHI,Financial` - Filter by sensitivity categories
+- `--user username` - Filter by database user
+- `--ip 192.168.1.1` - Filter by client IP address
+- `--type SELECT,INSERT,UPDATE` - Filter by query types
+- `--bulk` - Show only bulk operations
+- `--bulk-type export` - Show only specific bulk operation types
+- `--filter email,ssn` - Filter by sensitive field names
+- `--since 2025-10-01T00:00:00Z` - Filter by absolute time
+- `--last 7d` - Filter by relative time (supports `d` for days, `h` for hours)
+- `--exclude-errors` - Exclude ERROR events
+- `--summary` - Print summary statistics instead of events
+- `--limit 100` - Limit number of output events
+
+**Output Formats:**
+- **Default**: NDJSON with all original fields preserved
+- **Summary**: Aggregated statistics with breakdowns by sensitivity, query type, risk level, and bulk operations
+
+### 5. Schema CSV Format
 
 The `--schema` flag expects a CSV file with the following format:
 
@@ -549,7 +603,19 @@ ORDER BY schemaname, tablename, attname;
 echo "Enriched $(wc -l < enriched_events.ndjson) events"
 ```
 
-## Step 6: Analyze Results
+## Step 6: Verify and Hash Events
+
+```bash
+# Create hash chain for tamper-evident logs
+./bin/auditr verify \
+  --input enriched_events.ndjson \
+  --output hashed_events.ndjson
+
+# Verify hash chain integrity
+./bin/auditr verify --input hashed_events.ndjson --summary
+```
+
+## Step 7: Query and Analyze Results
 
 ```bash
 # Count sensitive events by category
@@ -564,6 +630,11 @@ jq 'select(.risk_level == "high" or .risk_level == "critical")' enriched_events.
 
 # Find bulk operations
 jq 'select(.bulk == true)' enriched_events.ndjson
+
+# Use query command for advanced filtering
+./bin/auditr query --input hashed_events.ndjson --sensitivity PII --summary
+./bin/auditr query --input hashed_events.ndjson --bulk-type export --summary
+./bin/auditr query --input hashed_events.ndjson --user appuser1 --last 7d
 
 # Check run log for metrics
 cat logs/run_log.jsonl | jq .

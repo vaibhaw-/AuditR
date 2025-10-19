@@ -22,7 +22,7 @@ var (
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// Skip config loading for commands that don't need it
 			cmdName := cmd.Name()
-			if cmdName == "version" || cmdName == "dict" || cmdName == "validate" || cmdName == "help" {
+			if cmdName == "version" || cmdName == "dict" || cmdName == "validate" || cmdName == "query" || cmdName == "help" {
 				return nil
 			}
 
