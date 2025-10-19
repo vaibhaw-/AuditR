@@ -60,7 +60,7 @@ AuditR is a CLI tool that processes database audit logs into tamper-evident, enr
 
 * **Parse** PostgreSQL pgAudit or MySQL Percona Audit Log Plugin logs
 * **Normalize** into NDJSON format with structured event data
-* **Detect** bulk operations (SELECT *, COPY, LOAD DATA) automatically during parsing
+* **Detect** bulk operations (multi-row INSERT, data export SELECT, COPY, LOAD DATA) automatically during parsing
 * **Enrich** with schema metadata, sensitivity classification, and risk scoring
 * **Classify** sensitive data (PII, PHI, Financial) using regex-based dictionaries
 * **Score** risk levels (low, medium, high, critical) based on data combinations
@@ -110,9 +110,10 @@ When troubleshooting, you can enable debug logging to see:
 
 * **Parser Details**:
   - SQL query extraction and classification
-  - Bulk operation detection (COPY, LOAD DATA, multi-row INSERT, full table SELECT)
+  - Bulk operation detection (COPY, LOAD DATA, multi-row INSERT, data export SELECT)
   - Authentication events
   - Parsing decisions and context
+  - Column resolution and schema matching
 
 * **Processing Stats**:
   - Progress updates every 1000 lines
@@ -191,7 +192,13 @@ auditr parse --db postgres --input pgaudit.log --follow --emit-raw
 **Bulk Operation Detection**: The parse step automatically detects and flags bulk operations:
 - `bulk`: `true`/`false` - whether the operation is a bulk data operation
 - `bulk_type`: `"insert"`/`"export"`/`"import"` - type of bulk operation
-- `full_table_read`: `true`/`false` - whether the operation reads entire tables (SELECT * without WHERE)
+- `full_table_read`: `true`/`false` - whether the operation reads entire tables
+
+**Bulk Detection Logic**:
+- **Multi-row INSERT**: `INSERT ... VALUES (1,2), (3,4), (5,6)` or multiple VALUES clauses
+- **Data Export**: `SELECT * FROM table` or `SELECT column1, column2 FROM table` (without WHERE)
+- **Bulk Commands**: `COPY TO/FROM`, `LOAD DATA INFILE`, `SELECT INTO OUTFILE`
+- **NOT Bulk**: `SELECT COUNT(*)`, `SELECT NOW()`, `SELECT 1`, system/metadata queries
 
 ```json
 {
@@ -249,6 +256,8 @@ auditr enrich \
 ### 3. Verify Command
 
 Compute or validate per-event hash chains and manage checkpoints.
+
+**Note**: The `--input` argument is required. Running `auditr verify` without arguments will show an error.
 
 ```bash
 # Hash mode – writes hash fields, auto-checkpoint at file end if configured

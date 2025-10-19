@@ -23,7 +23,7 @@ type SchemaMap map[string]map[string]map[string]string
 // - Stripping size specifications (e.g., VARCHAR(255) -> VARCHAR)
 // - Handling special cases for different databases
 func LoadSchemaCSV(path string) (SchemaMap, error) {
-	logger.L().Infow("Loading schema from CSV", "path", path)
+	logger.L().Debugw("Loading schema from CSV", "path", path)
 
 	file, err := os.Open(path)
 	if err != nil {
@@ -130,7 +130,7 @@ func LoadSchemaCSV(path string) (SchemaMap, error) {
 			"normalized_type", normalizedType)
 	}
 
-	logger.L().Infow("Schema loading completed",
+	logger.L().Debugw("Schema loading completed",
 		"total_columns", rowCount,
 		"schemas", len(schema))
 
@@ -141,7 +141,7 @@ func LoadSchemaCSV(path string) (SchemaMap, error) {
 		for _, columns := range tables {
 			columnCount += len(columns)
 		}
-		logger.L().Infow("Schema summary",
+		logger.L().Debugw("Schema summary",
 			"schema", schemaName,
 			"tables", tableCount,
 			"columns", columnCount)

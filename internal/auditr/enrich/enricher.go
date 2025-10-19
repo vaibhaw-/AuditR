@@ -46,7 +46,7 @@ type EnrichmentResult struct {
 
 // NewEnricher creates a new enricher with the provided components
 func NewEnricher(schema SchemaMap, dict *CompiledSensitivityDict, riskScoring *config.RiskScoring, options EnrichmentOptions) *Enricher {
-	logger.L().Infow("Creating new enricher",
+	logger.L().Debugw("Creating new enricher",
 		"schema_entries", len(schema),
 		"dict_categories", len(dict.Categories),
 		"emit_unknown", options.EmitUnknown,
@@ -215,7 +215,7 @@ func (e *Enricher) ProcessEvent(event map[string]interface{}) EnrichmentResult {
 			enrichedEvent["debug_info"] = debugInfo
 		}
 
-		logger.L().Infow("Event enrichment completed",
+		logger.L().Debugw("Event enrichment completed",
 			"event_id", eventID,
 			"categories", strings.Join(categories, ","),
 			"risk_level", riskLevel,

@@ -71,21 +71,21 @@ func runEnrich(cmd *cobra.Command, args []string) error {
 		"debug", enrichFlagDebug)
 
 	// Load schema
-	logger.L().Infow("Loading database schema", "file", enrichFlagSchema)
+	logger.L().Debugw("Loading database schema", "file", enrichFlagSchema)
 	schema, err := enrich.LoadSchemaCSV(enrichFlagSchema)
 	if err != nil {
 		return fmt.Errorf("failed to load schema: %w", err)
 	}
 
 	// Load sensitivity dictionary
-	logger.L().Infow("Loading sensitivity dictionary", "file", enrichFlagDict)
+	logger.L().Debugw("Loading sensitivity dictionary", "file", enrichFlagDict)
 	dict, err := enrich.LoadDict(enrichFlagDict)
 	if err != nil {
 		return fmt.Errorf("failed to load sensitivity dictionary: %w", err)
 	}
 
 	// Load risk scoring
-	logger.L().Infow("Loading risk scoring policy", "file", enrichFlagRisk)
+	logger.L().Debugw("Loading risk scoring policy", "file", enrichFlagRisk)
 	riskScoring, err := enrich.LoadRisk(enrichFlagRisk, dict.CategoryNames)
 	if err != nil {
 		return fmt.Errorf("failed to load risk scoring: %w", err)
@@ -101,7 +101,7 @@ func runEnrich(cmd *cobra.Command, args []string) error {
 
 	// Log enricher statistics
 	stats := enricher.GetStats()
-	logger.L().Infow("Enricher initialized",
+	logger.L().Debugw("Enricher initialized",
 		"stats", stats)
 
 	// Setup input reader
@@ -113,9 +113,9 @@ func runEnrich(cmd *cobra.Command, args []string) error {
 		}
 		defer file.Close()
 		input = file
-		logger.L().Infow("Reading from input file", "file", enrichFlagInput)
+		logger.L().Debugw("Reading from input file", "file", enrichFlagInput)
 	} else {
-		logger.L().Info("Reading from stdin")
+		logger.L().Debug("Reading from stdin")
 	}
 
 	// Setup output writer
@@ -127,9 +127,9 @@ func runEnrich(cmd *cobra.Command, args []string) error {
 		}
 		defer file.Close()
 		output = file
-		logger.L().Infow("Writing to output file", "file", enrichFlagOutput)
+		logger.L().Debugw("Writing to output file", "file", enrichFlagOutput)
 	} else {
-		logger.L().Info("Writing to stdout")
+		logger.L().Debug("Writing to stdout")
 	}
 
 	// Process events

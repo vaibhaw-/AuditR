@@ -542,14 +542,37 @@ func detectBulkOperation(query string) map[string]interface{} {
 		}
 	}
 
-	// Full table SELECT
+	// Full table SELECT - only consider it bulk if it's selecting actual data columns
 	if strings.HasPrefix(up, "SELECT") {
 		hasWhere := strings.Contains(up, "WHERE")
-		log.Debugw("checking SELECT for full table read",
-			"has_where", hasWhere)
 
+		// Check if this is a data export (not just metadata/system queries)
+		isDataExport := false
 		if !hasWhere {
-			log.Debugw("detected full table SELECT")
+			// Check for SELECT * (wildcard - definitely bulk)
+			if strings.Contains(up, "SELECT *") {
+				isDataExport = true
+			} else {
+				// Check for actual column names (not system functions)
+				// Extract the column list between SELECT and FROM
+				selectFromMatch := regexp.MustCompile(`SELECT\s+(.+?)\s+FROM`).FindStringSubmatch(up)
+				if len(selectFromMatch) > 1 {
+					columnList := strings.TrimSpace(selectFromMatch[1])
+					// Check if it contains actual column names (not just COUNT(*), NOW(), etc.)
+					// System functions typically don't have spaces before the function name
+					if !regexp.MustCompile(`(?i)^(COUNT|SUM|AVG|MIN|MAX|NOW|VERSION|USER|DATABASE|1|'[^']*')\s*\(?`).MatchString(columnList) {
+						isDataExport = true
+					}
+				}
+			}
+		}
+
+		log.Debugw("checking SELECT for full table read",
+			"has_where", hasWhere,
+			"is_data_export", isDataExport)
+
+		if !hasWhere && isDataExport {
+			log.Debugw("detected full table SELECT (data export)")
 			return map[string]interface{}{
 				"bulk_operation":  true,
 				"bulk_type":       "export",

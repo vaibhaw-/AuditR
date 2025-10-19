@@ -22,7 +22,42 @@ var (
 var verifyCmd = &cobra.Command{
 	Use:   "verify",
 	Short: "Compute or validate hash chain for NDJSON logs",
+	Long: `Verify command operates in two modes:
+
+Hash Mode (--output provided):
+  Computes hash chains for events and optionally creates checkpoints
+  Requires: --input, --output
+  Optional: --checkpoint, --private-key
+
+Verify Mode (no --output):
+  Verifies existing hash chains and optionally validates checkpoints  
+  Requires: --input
+  Optional: --checkpoint-path, --public-key
+
+Examples:
+  # Hash mode: compute hash chains
+  auditr verify --input events.jsonl --output hashed.jsonl --checkpoint --private-key key.pem
+  
+  # Verify mode: verify hash chains
+  auditr verify --input hashed.jsonl
+  
+  # Verify mode: verify with checkpoint
+  auditr verify --input hashed.jsonl --checkpoint-path checkpoint.json --public-key pub.pem`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Validate required arguments
+		if verifyFlagInput == "" {
+			return fmt.Errorf("--input is required")
+		}
+
+		// Determine mode based on --output presence
+		if verifyFlagOutput != "" {
+			// Hash mode: --output provided
+			// No additional validation needed beyond --input
+		} else {
+			// Verify mode: no --output
+			// --input is already validated above
+		}
+
 		cfg := config.Get()
 		argsV := verify.VerifyArgs{
 			InputFile:      verifyFlagInput,

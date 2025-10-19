@@ -45,7 +45,7 @@ type CompiledSensitivityDict struct {
 // LoadDict loads and validates the sensitivity dictionary from a file path.
 // It uses the existing config.ValidateDict function and compiles all regexes for efficient matching.
 func LoadDict(path string) (*CompiledSensitivityDict, error) {
-	logger.L().Infow("Loading sensitivity dictionary", "path", path)
+	logger.L().Debugw("Loading sensitivity dictionary", "path", path)
 
 	// Open and read the dictionary file
 	file, err := os.Open(path)
@@ -60,7 +60,7 @@ func LoadDict(path string) (*CompiledSensitivityDict, error) {
 		return nil, fmt.Errorf("failed to validate dictionary: %w", err)
 	}
 
-	logger.L().Infow("Dictionary validation successful",
+	logger.L().Debugw("Dictionary validation successful",
 		"categories", len(categoryNames),
 		"category_names", strings.Join(categoryNames, ","))
 
@@ -123,7 +123,7 @@ func LoadDict(path string) (*CompiledSensitivityDict, error) {
 			"reason", negRule.Reason)
 	}
 
-	logger.L().Infow("Dictionary compilation completed",
+	logger.L().Debugw("Dictionary compilation completed",
 		"total_positive_rules", totalRules,
 		"negative_rules", len(compiledDict.Negative),
 		"categories", strings.Join(categoryNames, ","))
@@ -134,7 +134,7 @@ func LoadDict(path string) (*CompiledSensitivityDict, error) {
 // LoadRisk loads and validates the risk scoring configuration from a file path.
 // It uses the existing config.ValidateRiskScoring function.
 func LoadRisk(path string, categoryNames []string) (*config.RiskScoring, error) {
-	logger.L().Infow("Loading risk scoring configuration", "path", path)
+	logger.L().Debugw("Loading risk scoring configuration", "path", path)
 
 	// Open and read the risk scoring file
 	file, err := os.Open(path)
@@ -149,7 +149,7 @@ func LoadRisk(path string, categoryNames []string) (*config.RiskScoring, error) 
 		return nil, fmt.Errorf("failed to validate risk scoring: %w", err)
 	}
 
-	logger.L().Infow("Risk scoring validation successful",
+	logger.L().Debugw("Risk scoring validation successful",
 		"base_categories", len(riskScoring.Base),
 		"combinations", len(riskScoring.Combinations),
 		"default_risk", riskScoring.Default)
