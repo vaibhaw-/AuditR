@@ -169,13 +169,21 @@ func TestRunQueryWithStdin(t *testing.T) {
 }
 
 func TestRunQueryWithInvalidFile(t *testing.T) {
+	// Create a temporary directory to ensure the file doesn't exist
+	tempDir := t.TempDir()
+	nonexistentFile := filepath.Join(tempDir, "nonexistent.jsonl")
+	outputFile := filepath.Join(tempDir, "invalid_output.jsonl")
+
 	opts := QueryOptions{
-		InputFiles: []string{"/nonexistent/file.jsonl"},
-		Summary:    true,
+		InputFiles: []string{nonexistentFile},
+		OutputFile: outputFile,
+		Summary:    false, // Don't print summary to avoid test interference
 	}
 
 	// The query system is designed to be resilient - it should continue processing
 	// even when files can't be opened, and report errors in the statistics
+	t.Logf("Running TestRunQueryWithInvalidFile with file: %s", nonexistentFile)
+
 	err := RunQuery(opts)
 	if err != nil {
 		t.Errorf("Expected no error with nonexistent file (resilient design), got: %v", err)
@@ -198,9 +206,13 @@ func TestRunQueryWithMalformedJSON(t *testing.T) {
 	file.WriteString(`{"another": "valid"}` + "\n")
 	file.Close()
 
+	// Create output file to avoid stdout interference
+	outputFile := filepath.Join(tempDir, "malformed_output.jsonl")
+
 	opts := QueryOptions{
 		InputFiles: []string{testFile},
-		Summary:    true,
+		OutputFile: outputFile,
+		Summary:    false, // Don't print summary to avoid test interference
 	}
 
 	err = RunQuery(opts)

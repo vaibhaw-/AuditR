@@ -42,22 +42,26 @@ func RunQuery(opts QueryOptions) error {
 	// Process events from input stream
 	// This is the main processing loop that handles each event
 	for result := range ReadEvents(opts.InputFiles) {
-		stats.IncrementInput() // Count every event processed
-
 		// Handle parsing errors gracefully
 		if result.Err != nil {
 			stats.IncrementError() // Count error events
 			continue               // Skip to next event
 		}
 
+		stats.IncrementInput() // Count every valid event processed
+
 		// Apply all filters using AND logic
 		// Event must match ALL filters to be included
 		if matchAll(result.Event, filters) {
 			stats.IncrementMatched(result.Event) // Update statistics
 
-			// Write matching event to output
-			if err := WriteEventNDJSON(output, result.Event); err != nil {
-				return fmt.Errorf("failed to write event: %w", err)
+			// Only write events to output if not in summary-only mode
+			// When --summary is specified without --output, only print summary to stderr
+			if !opts.Summary || opts.OutputFile != "" {
+				// Write matching event to output
+				if err := WriteEventNDJSON(output, result.Event); err != nil {
+					return fmt.Errorf("failed to write event: %w", err)
+				}
 			}
 
 			// Check if we've reached the limit
