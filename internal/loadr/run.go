@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/brianvoe/gofakeit/v7"
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
 	"gopkg.in/yaml.v3"
@@ -97,6 +98,7 @@ func Run(configPath *string) {
 		seed = time.Now().UnixNano()
 	}
 	rand.Seed(seed)
+	gofakeit.Seed(seed) // Initialize gofakeit with same seed
 
 	log.Printf("[INFO] Starting run=%s driver=%s db=%s ops=%d concurrency=%d seed=%d",
 		cfg.RunId, cfg.Driver, cfg.Database, cfg.TotalOps, cfg.Concurrency, seed)
@@ -126,7 +128,7 @@ func Run(configPath *string) {
 	close(opsCh)
 
 	// Stats
-	stats := map[string]int{"select": 0, "update": 0, "errors": 0}
+	stats := map[string]int{"select": 0, "update": 0, "errors": 0, "sensitive": 0, "mixed": 0, "non_sensitive": 0, "skipped": 0}
 	var statsMu sync.Mutex
 
 	// Start workers
@@ -152,6 +154,10 @@ func Run(configPath *string) {
 				sens := pickSensitivity(cfg)
 				query, args := generateQuery(cfg, op, sens, user.Username, cache)
 				if query == "" {
+					log.Printf("[WARN] Worker %d: skipping %s %s (empty cache)", workerID, op, sens)
+					statsMu.Lock()
+					stats["skipped"]++
+					statsMu.Unlock()
 					continue
 				}
 
@@ -168,6 +174,14 @@ func Run(configPath *string) {
 				} else {
 					statsMu.Lock()
 					stats[strings.ToLower(op)]++
+					// Track sensitivity distribution for successfully executed queries
+					if sens == "sensitive_only" {
+						stats["sensitive"]++
+					} else if sens == "mixed" {
+						stats["mixed"]++
+					} else {
+						stats["non_sensitive"]++
+					}
 					statsMu.Unlock()
 				}
 			}
@@ -178,6 +192,16 @@ func Run(configPath *string) {
 
 	log.Printf("[INFO] Run complete: select=%d update=%d errors=%d",
 		stats["select"], stats["update"], stats["errors"])
+	log.Printf("[INFO] Sensitivity breakdown: sensitive=%d mixed=%d non_sensitive=%d skipped=%d",
+		stats["sensitive"], stats["mixed"], stats["non_sensitive"], stats["skipped"])
+
+	total := stats["sensitive"] + stats["mixed"] + stats["non_sensitive"]
+	if total > 0 {
+		log.Printf("[INFO] Sensitivity distribution: sensitive=%.1f%% mixed=%.1f%% non_sensitive=%.1f%%",
+			float64(stats["sensitive"])/float64(total)*100,
+			float64(stats["mixed"])/float64(total)*100,
+			float64(stats["non_sensitive"])/float64(total)*100)
+	}
 }
 
 // ------------------- Helpers -------------------
@@ -195,6 +219,7 @@ func normalizeMixes(cfg *RunConfig) {
 	// op mix
 	tot := cfg.Mix.Select + cfg.Mix.Update
 	if tot <= 0 {
+		log.Printf("[WARN] Operation mix is invalid (select=%f, update=%f), using defaults (0.7, 0.3)", cfg.Mix.Select, cfg.Mix.Update)
 		cfg.Mix.Select, cfg.Mix.Update = 0.7, 0.3
 		tot = 1
 	}
@@ -204,6 +229,8 @@ func normalizeMixes(cfg *RunConfig) {
 	// sensitivity mix
 	tots := cfg.Sensitivity.SensitiveOnly + cfg.Sensitivity.Mixed + cfg.Sensitivity.NonSensitiveOnly
 	if tots <= 0 {
+		log.Printf("[WARN] Sensitivity mix is invalid (sensitive_only=%f, mixed=%f, non_sensitive_only=%f), using defaults (0.4, 0.4, 0.2)",
+			cfg.Sensitivity.SensitiveOnly, cfg.Sensitivity.Mixed, cfg.Sensitivity.NonSensitiveOnly)
 		cfg.Sensitivity.SensitiveOnly, cfg.Sensitivity.Mixed, cfg.Sensitivity.NonSensitiveOnly = 0.4, 0.4, 0.2
 		tots = 1
 	}
@@ -297,7 +324,8 @@ func generateQuery(cfg RunConfig, op string, sensitivity string, username string
 				return "", nil
 			}
 			log.Printf("[DEBUG] Generating sensitive SELECT")
-			q := comment + "SELECT p.patient_id, p.ssn, p.email, pm.card_last4 " +
+			q := comment + "SELECT p.patient_id, p.ssn, p.first_name, p.last_name, p.dob, p.email, p.phone_number, " +
+				"p.address_line1, p.city, p.state, pm.card_last4, pm.card_network " +
 				"FROM healthcare.patient p " +
 				"JOIN payments.payment_method pm ON p.patient_id = pm.patient_id " +
 				"WHERE p.patient_id = " + ph(1) + " LIMIT 5"
@@ -312,7 +340,9 @@ func generateQuery(cfg RunConfig, op string, sensitivity string, username string
 				return "", nil
 			}
 			log.Printf("[DEBUG] Generating mixed SELECT")
-			q := comment + "SELECT p.email, e.diagnosis, o.total_price, pm.card_last4 " +
+			q := comment + "SELECT p.email, p.phone_number, p.first_name, p.last_name, " +
+				"e.diagnosis, e.treatment, e.notes, " +
+				"o.shipping_address, pm.card_last4, pm.payment_token " +
 				"FROM healthcare.patient p " +
 				"JOIN healthcare.encounter e ON p.patient_id = e.patient_id " +
 				"JOIN pharmacy.pharmacy_order o ON p.patient_id = o.patient_id " +
@@ -356,17 +386,36 @@ func generateQuery(cfg RunConfig, op string, sensitivity string, username string
 			return q, []interface{}{newPhone, cache.PatientIDs[rand.Intn(len(cache.PatientIDs))]}
 
 		case "mixed":
-			if len(cache.OrderIDs) == 0 {
-				return "", nil
+			// Alternate between PII update (shipping_address) and PHI update (treatment)
+			usePII := rand.Intn(2) == 0
+
+			if usePII {
+				if len(cache.OrderIDs) == 0 {
+					return "", nil
+				}
+				log.Printf("[DEBUG] Generating mixed UPDATE (PII - shipping_address)")
+				// Generate realistic address like load.go does
+				street := gofakeit.Street()
+				newAddress := street
+				q := comment + "UPDATE pharmacy.pharmacy_order SET shipping_address=" + ph(1) + " WHERE order_id=" + ph(2)
+				if cfg.Driver == "mysql" {
+					q = strings.ReplaceAll(q, "pharmacy.pharmacy_order", "pharmacy_order")
+				}
+				orderID := cache.OrderIDs[rand.Intn(len(cache.OrderIDs))]
+				return q, []interface{}{newAddress, orderID}
+			} else {
+				if len(cache.EncounterIDs) == 0 {
+					return "", nil
+				}
+				log.Printf("[DEBUG] Generating mixed UPDATE (PHI - treatment)")
+				treatment := []string{"Physical therapy 3x/week", "Medication review", "Follow-up in 4 weeks", "Diet modification", "Exercise regimen"}[rand.Intn(5)]
+				q := comment + "UPDATE healthcare.encounter SET treatment=" + ph(1) + " WHERE encounter_id=" + ph(2)
+				if cfg.Driver == "mysql" {
+					q = strings.ReplaceAll(q, "healthcare.encounter", "healthcare_encounter")
+				}
+				encounterID := cache.EncounterIDs[rand.Intn(len(cache.EncounterIDs))]
+				return q, []interface{}{treatment, encounterID}
 			}
-			log.Printf("[DEBUG] Generating mixed UPDATE")
-			newStatus := []string{"PENDING", "FILLED", "CANCELLED"}[rand.Intn(3)]
-			newTotal := rand.Float64() * 100
-			q := comment + "UPDATE pharmacy.pharmacy_order SET status=" + ph(1) + ", total_price=" + ph(2) + " WHERE order_id=" + ph(3)
-			if cfg.Driver == "mysql" {
-				q = strings.ReplaceAll(q, "pharmacy.pharmacy_order", "pharmacy_order")
-			}
-			return q, []interface{}{newStatus, newTotal, cache.OrderIDs[rand.Intn(len(cache.OrderIDs))]}
 
 		default: // non_sensitive_only
 			if len(cache.DrugIDs) == 0 {

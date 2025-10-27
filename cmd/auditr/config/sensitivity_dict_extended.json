@@ -16,6 +16,11 @@
       "sample_pattern": ".+@.+\\..+"
     },
     {
+      "regex": "(?i)^(first_?|last_?)name$",
+      "expected_types": ["VARCHAR", "TEXT"],
+      "sample_pattern": ".*"
+    },
+    {
       "regex": "(?i)address",
       "expected_types": ["VARCHAR", "TEXT"],
       "sample_pattern": ".*"
@@ -39,6 +44,11 @@
     },
     {
       "regex": "(?i)^dosage_?instructions?$",
+      "expected_types": ["TEXT"],
+      "sample_pattern": ".*"
+    },
+    {
+      "regex": "(?i)^notes$",
       "expected_types": ["TEXT"],
       "sample_pattern": ".*"
     }

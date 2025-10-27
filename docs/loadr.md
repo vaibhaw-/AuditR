@@ -24,6 +24,30 @@ It is designed to include realistic **relationships** and **sensitive data types
 
 *(SVG version available in `schema.svg` for zoomable detail.)*
 
+### Sensitive Column Reference
+
+This section documents all sensitive columns in the database schema for reference:
+
+**PII (Personally Identifiable Information):**
+- `ssn` - Social Security Number
+- `first_name` - Patient first name
+- `last_name` - Patient last name
+- `dob` - Date of birth
+- `email` - Email address
+- `phone_number` - Phone number
+- `address_line1`, `address_line2`, `city`, `state`, `postal_code` - Address components
+- `shipping_address` - Shipping address
+
+**PHI (Protected Health Information):**
+- `diagnosis` - Medical diagnosis
+- `treatment` - Treatment information
+- `notes` - Clinical notes
+
+**Financial:**
+- `card_network` - Payment card network (Visa, Mastercard, etc.)
+- `card_last4` - Last 4 digits of card
+- `payment_token` - Payment tokenization identifier
+
 ## Data Generation
 
 ### Data Generation Phase (loadr load)
