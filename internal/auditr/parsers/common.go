@@ -107,6 +107,78 @@ func normalizeStmtType(s string) string {
 	}
 }
 
+// isPrivilegeEscalation checks if a GRANT, REVOKE, ALTER USER, CREATE USER, or ALTER ROLE statement
+// represents a privilege escalation. This detects high-risk privilege management commands.
+//
+// Detects:
+//   - GRANT ROLE ... TO ... (PostgreSQL role membership grants)
+//   - REVOKE ROLE ... FROM ... (PostgreSQL role membership revocations)
+//   - GRANT ... WITH ADMIN OPTION (PostgreSQL - allows role administration)
+//   - GRANT ... WITH GRANT OPTION (MySQL/PostgreSQL - allows grantee to grant privileges)
+//   - GRANT ALL PRIVILEGES (very broad privilege grants)
+//   - ALTER USER ... WITH SUPER (MySQL superuser grants)
+//   - ALTER USER ... WITH ALL PRIVILEGES (MySQL)
+//   - ALTER USER ... WITH GRANT OPTION (MySQL)
+//   - CREATE USER ... WITH SUPER (MySQL)
+//   - CREATE USER ... WITH GRANT OPTION (MySQL)
+//   - ALTER ROLE ... WITH SUPER (PostgreSQL - superuser grants)
+//   - ALTER ROLE ... WITH CREATEDB (PostgreSQL - high privilege grants)
+//   - ALTER ROLE ... WITH CREATEROLE (PostgreSQL - high privilege grants)
+func isPrivilegeEscalation(queryUpper string) bool {
+	// GRANT ROLE ... TO ... (PostgreSQL)
+	if strings.Contains(queryUpper, "GRANT") && strings.Contains(queryUpper, "ROLE") && strings.Contains(queryUpper, " TO ") {
+		return true
+	}
+
+	// REVOKE ROLE ... FROM ... (PostgreSQL)
+	if strings.Contains(queryUpper, "REVOKE") && strings.Contains(queryUpper, "ROLE") && strings.Contains(queryUpper, " FROM ") {
+		return true
+	}
+
+	// WITH ADMIN OPTION (PostgreSQL - allows role administration)
+	if strings.Contains(queryUpper, "WITH ADMIN OPTION") {
+		return true
+	}
+
+	// WITH GRANT OPTION (allows grantee to grant privileges to others)
+	if strings.Contains(queryUpper, "WITH GRANT OPTION") {
+		return true
+	}
+
+	// GRANT ALL PRIVILEGES (very broad privilege grants - high risk)
+	if strings.Contains(queryUpper, "GRANT") && strings.Contains(queryUpper, "ALL PRIVILEGES") {
+		return true
+	}
+
+	// ALTER USER ... WITH SUPER/ALL PRIVILEGES/GRANT OPTION (MySQL)
+	if strings.HasPrefix(queryUpper, "ALTER USER") {
+		if strings.Contains(queryUpper, "WITH SUPER") ||
+			strings.Contains(queryUpper, "WITH ALL PRIVILEGES") ||
+			strings.Contains(queryUpper, "WITH GRANT OPTION") {
+			return true
+		}
+	}
+
+	// CREATE USER ... WITH SUPER/GRANT OPTION (MySQL)
+	if strings.HasPrefix(queryUpper, "CREATE USER") {
+		if strings.Contains(queryUpper, "WITH SUPER") ||
+			strings.Contains(queryUpper, "WITH GRANT OPTION") {
+			return true
+		}
+	}
+
+	// ALTER ROLE ... WITH SUPER/CREATEDB/CREATEROLE (PostgreSQL)
+	if strings.HasPrefix(queryUpper, "ALTER ROLE") {
+		if strings.Contains(queryUpper, "WITH SUPER") ||
+			strings.Contains(queryUpper, "WITH CREATEDB") ||
+			strings.Contains(queryUpper, "WITH CREATEROLE") {
+			return true
+		}
+	}
+
+	return false
+}
+
 // detectQueryType inspects the SQL text and classifies it into a canonical type.
 func detectQueryType(query string) string {
 	s := normalizeSQL(query)
@@ -149,7 +221,22 @@ func detectQueryType(query string) string {
 	case strings.HasPrefix(sUp, "MERGE"):
 		return "MERGE"
 
-	// --- DDL ---
+	// --- DDL (check privilege escalation first) ---
+	case strings.HasPrefix(sUp, "CREATE USER"):
+		if isPrivilegeEscalation(sUp) {
+			return "CREATE_USER_ESCALATION"
+		}
+		return "CREATE"
+	case strings.HasPrefix(sUp, "ALTER USER"):
+		if isPrivilegeEscalation(sUp) {
+			return "ALTER_USER_ESCALATION"
+		}
+		return "ALTER"
+	case strings.HasPrefix(sUp, "ALTER ROLE"):
+		if isPrivilegeEscalation(sUp) {
+			return "ALTER_ROLE_ESCALATION"
+		}
+		return "ALTER"
 	case strings.HasPrefix(sUp, "CREATE"):
 		return "CREATE"
 	case strings.HasPrefix(sUp, "ALTER"):
@@ -159,10 +246,16 @@ func detectQueryType(query string) string {
 	case strings.HasPrefix(sUp, "RENAME TABLE"):
 		return "ALTER"
 
-	// --- Privileges ---
+	// --- Privileges (check escalation patterns first) ---
 	case strings.HasPrefix(sUp, "GRANT"):
+		if isPrivilegeEscalation(sUp) {
+			return "GRANT_ESCALATION"
+		}
 		return "GRANT"
 	case strings.HasPrefix(sUp, "REVOKE"):
+		if isPrivilegeEscalation(sUp) {
+			return "REVOKE_ESCALATION"
+		}
 		return "REVOKE"
 
 	// --- Bulk ops ---

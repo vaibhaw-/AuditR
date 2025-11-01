@@ -242,44 +242,66 @@ func extractTables(query string, refs *QueryRefs) {
 		}
 	}
 
-	// Pattern 4: UPDATE table_name [alias]
+	// Pattern 4: UPDATE table_name [alias] - support schema-qualified table names
 	if strings.Contains(queryUpper, "UPDATE") {
 		// Try with alias first - alias must not be followed by SET
-		updateWithAliasPattern := regexp.MustCompile(`(?i)\bUPDATE\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+SET\b`)
+		updateWithAliasPattern := regexp.MustCompile(`(?i)\bUPDATE\s+([a-zA-Z_][a-zA-Z0-9_.]*)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+SET\b`)
 		updateAliasMatches := updateWithAliasPattern.FindStringSubmatch(query)
 
 		if len(updateAliasMatches) > 2 {
-			tableName := updateAliasMatches[1]
+			fullTableName := updateAliasMatches[1]
 			alias := updateAliasMatches[2]
 
 			if !isReservedWord(alias) {
+				// Extract just the table name (last part after dot)
+				tableName := fullTableName
+				if strings.Contains(fullTableName, ".") {
+					parts := strings.Split(fullTableName, ".")
+					tableName = parts[len(parts)-1]
+				}
 				refs.Tables[alias] = tableName
 				refs.Tables[tableName] = tableName
 				logger.L().Debugw("Found UPDATE table with alias",
+					"full_table", fullTableName,
 					"table", tableName,
 					"alias", alias)
 			}
 		} else {
 			// Try without alias - table name followed by SET
-			updatePattern := regexp.MustCompile(`(?i)\bUPDATE\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+SET\b`)
+			updatePattern := regexp.MustCompile(`(?i)\bUPDATE\s+([a-zA-Z_][a-zA-Z0-9_.]*)\s+SET\b`)
 			updateMatches := updatePattern.FindStringSubmatch(query)
 			if len(updateMatches) > 1 {
-				tableName := updateMatches[1]
+				fullTableName := updateMatches[1]
+				// Extract just the table name (last part after dot)
+				tableName := fullTableName
+				if strings.Contains(fullTableName, ".") {
+					parts := strings.Split(fullTableName, ".")
+					tableName = parts[len(parts)-1]
+				}
 				refs.Tables[tableName] = tableName
 				logger.L().Debugw("Found UPDATE table without alias",
+					"full_table", fullTableName,
 					"table", tableName)
 			}
 		}
 	}
 
-	// Pattern 5: DELETE FROM table_name
+	// Pattern 5: DELETE FROM table_name - support schema-qualified table names
 	if strings.Contains(queryUpper, "DELETE FROM") {
-		deletePattern := regexp.MustCompile(`(?i)\bDELETE\s+FROM\s+([a-zA-Z_][a-zA-Z0-9_]*)\b`)
+		deletePattern := regexp.MustCompile(`(?i)\bDELETE\s+FROM\s+([a-zA-Z_][a-zA-Z0-9_.]*)\b`)
 		deleteMatches := deletePattern.FindStringSubmatch(query)
 		if len(deleteMatches) > 1 {
-			tableName := deleteMatches[1]
+			fullTableName := deleteMatches[1]
+			// Extract just the table name (last part after dot)
+			tableName := fullTableName
+			if strings.Contains(fullTableName, ".") {
+				parts := strings.Split(fullTableName, ".")
+				tableName = parts[len(parts)-1]
+			}
 			refs.Tables[tableName] = tableName
-			logger.L().Debugw("Found DELETE table", "table", tableName)
+			logger.L().Debugw("Found DELETE table",
+				"full_table", fullTableName,
+				"table", tableName)
 		}
 	}
 }

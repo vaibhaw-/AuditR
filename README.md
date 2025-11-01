@@ -62,6 +62,7 @@ AuditR is a CLI tool that processes database audit logs into tamper-evident, enr
 * **Parse** PostgreSQL pgAudit or MySQL Percona Audit Log Plugin logs
 * **Normalize** into NDJSON format with structured event data
 * **Detect** bulk operations (multi-row INSERT, data export SELECT, COPY, LOAD DATA) automatically during parsing
+* **Detect** privilege escalation commands (GRANT ROLE, WITH GRANT OPTION, ALL PRIVILEGES, etc.) automatically during parsing
 * **Enrich** with schema metadata, sensitivity classification, and risk scoring
 * **Classify** sensitive data (PII, PHI, Financial) using regex-based dictionaries
 * **Score** risk levels (low, medium, high, critical) based on data combinations
@@ -204,6 +205,15 @@ auditr parse --db postgres --input pgaudit.log --follow --emit-raw
 - **Bulk Commands**: `COPY TO/FROM`, `LOAD DATA INFILE`, `SELECT INTO OUTFILE`
 - **NOT Bulk**: `SELECT COUNT(*)`, `SELECT NOW()`, `SELECT 1`, system/metadata queries
 
+**Privilege Escalation Detection**: The parse step automatically detects and classifies privilege escalation commands:
+- `query_type` is set to escalation-specific types when high-risk privilege patterns are detected
+- **Query Types**: `GRANT_ESCALATION`, `REVOKE_ESCALATION`, `ALTER_USER_ESCALATION`, `CREATE_USER_ESCALATION`, `ALTER_ROLE_ESCALATION`
+
+**Privilege Escalation Patterns Detected**:
+- **PostgreSQL**: `GRANT ROLE ... TO ...`, `REVOKE ROLE ... FROM ...`, `GRANT ... WITH ADMIN OPTION`, `GRANT ... WITH GRANT OPTION`, `ALTER ROLE ... WITH SUPER/CREATEDB/CREATEROLE`
+- **MySQL**: `GRANT ALL PRIVILEGES`, `GRANT ... WITH GRANT OPTION`, `ALTER USER ... WITH SUPER/ALL PRIVILEGES/GRANT OPTION`, `CREATE USER ... WITH SUPER/GRANT OPTION`
+- **Regular privilege commands** (without escalation patterns) remain as `GRANT`, `REVOKE`, `ALTER`, or `CREATE`
+
 ```json
 {
   "event_id": "abc-123-def",
@@ -324,6 +334,10 @@ auditr query --input enriched.ndjson --filter email,ssn,card_last4
 # High-risk events summary
 auditr query --input enriched.ndjson --sensitivity PII,PHI,Financial --summary
 
+# Find privilege escalation commands
+auditr query --input enriched.ndjson --type GRANT_ESCALATION
+auditr query --input enriched.ndjson --type GRANT_ESCALATION,REVOKE_ESCALATION,ALTER_USER_ESCALATION
+
 # Export filtered events to file
 auditr query --input hashed.ndjson --sensitivity PII --output pii_events.ndjson
 ```
@@ -340,7 +354,7 @@ auditr query --input hashed.ndjson --sensitivity PII --output pii_events.ndjson
 - `--sensitivity PII,PHI,Financial` - Filter by sensitivity categories
 - `--user username` - Filter by database user
 - `--ip 192.168.1.1` - Filter by client IP address
-- `--type SELECT,INSERT,UPDATE` - Filter by query types
+- `--type SELECT,INSERT,UPDATE` - Filter by query types (includes privilege escalation types: `GRANT_ESCALATION`, `REVOKE_ESCALATION`, `ALTER_USER_ESCALATION`, `CREATE_USER_ESCALATION`, `ALTER_ROLE_ESCALATION`)
 - `--bulk` - Show only bulk operations
 - `--bulk-type export` - Show only specific bulk operation types
 - `--filter email,ssn` - Filter by sensitive field names

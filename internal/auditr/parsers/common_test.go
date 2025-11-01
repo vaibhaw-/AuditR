@@ -36,6 +36,31 @@ var sqlClassificationTests = []struct {
 	{"Grant", "GRANT SELECT ON users TO bob;", "GRANT"},
 	{"Revoke", "REVOKE SELECT ON users FROM bob;", "REVOKE"},
 
+	// --- Privilege Escalation (PostgreSQL) ---
+	{"Grant Role (Postgres)", "GRANT ROLE admin TO user1;", "GRANT_ESCALATION"},
+	{"Revoke Role (Postgres)", "REVOKE ROLE admin FROM user1;", "REVOKE_ESCALATION"},
+	{"Grant With Admin Option (Postgres)", "GRANT SELECT ON table TO user WITH ADMIN OPTION;", "GRANT_ESCALATION"},
+	{"Grant With Grant Option (Postgres)", "GRANT SELECT ON table TO user WITH GRANT OPTION;", "GRANT_ESCALATION"},
+	{"Alter Role With Super (Postgres)", "ALTER ROLE admin WITH SUPER;", "ALTER_ROLE_ESCALATION"},
+	{"Alter Role With Createdb (Postgres)", "ALTER ROLE admin WITH CREATEDB;", "ALTER_ROLE_ESCALATION"},
+	{"Alter Role With Createrole (Postgres)", "ALTER ROLE admin WITH CREATEROLE;", "ALTER_ROLE_ESCALATION"},
+
+	// --- Privilege Escalation (MySQL) ---
+	{"Grant All Privileges (MySQL)", "GRANT ALL PRIVILEGES ON *.* TO user;", "GRANT_ESCALATION"},
+	{"Grant With Grant Option (MySQL)", "GRANT SELECT ON table TO user WITH GRANT OPTION;", "GRANT_ESCALATION"},
+	{"Alter User With Super (MySQL)", "ALTER USER root WITH SUPER;", "ALTER_USER_ESCALATION"},
+	{"Alter User With All Privileges (MySQL)", "ALTER USER root WITH ALL PRIVILEGES;", "ALTER_USER_ESCALATION"},
+	{"Alter User With Grant Option (MySQL)", "ALTER USER admin WITH GRANT OPTION;", "ALTER_USER_ESCALATION"},
+	{"Create User With Super (MySQL)", "CREATE USER admin WITH SUPER;", "CREATE_USER_ESCALATION"},
+	{"Create User With Grant Option (MySQL)", "CREATE USER admin WITH GRANT OPTION;", "CREATE_USER_ESCALATION"},
+
+	// --- Non-Escalation Privilege Commands (should remain normal types) ---
+	{"Grant Without Escalation", "GRANT SELECT ON table TO user;", "GRANT"},
+	{"Revoke Without Escalation", "REVOKE SELECT ON table FROM user;", "REVOKE"},
+	{"Alter User Without Escalation", "ALTER USER user1 PASSWORD 'secret';", "ALTER"},
+	{"Create User Without Escalation", "CREATE USER user1 IDENTIFIED BY 'pass';", "CREATE"},
+	{"Alter Role Without Escalation", "ALTER ROLE user1 PASSWORD 'secret';", "ALTER"},
+
 	// --- Bulk ops ---
 	{"Copy", "COPY users TO '/tmp/users.csv';", "COPY"},
 	{"Load Data", "LOAD DATA INFILE '/tmp/file' INTO TABLE users;", "LOAD_DATA"},

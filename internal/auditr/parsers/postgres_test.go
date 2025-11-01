@@ -609,3 +609,119 @@ func TestParseJSONLine(t *testing.T) {
 		})
 	}
 }
+
+func TestPostgresParser_PrivilegeEscalation(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		emitRaw  bool
+		wantType string
+		wantErr  bool
+	}{
+		// PostgreSQL privilege escalation via GRANT
+		{
+			name:     "GRANT ROLE in pgAudit CSV",
+			line:     `2025-09-07 13:00:42.038 IST [8997] LOG:  AUDIT: SESSION,3,1,ROLE,GRANT,,,GRANT ROLE admin TO user1;,<not logged>`,
+			emitRaw:  true,
+			wantType: "GRANT_ESCALATION",
+			wantErr:  false,
+		},
+		{
+			name:     "GRANT WITH ADMIN OPTION in pgAudit CSV",
+			line:     `2025-09-07 13:00:42.038 IST [8997] LOG:  AUDIT: SESSION,3,1,ROLE,GRANT,,,GRANT SELECT ON table TO user WITH ADMIN OPTION;,<not logged>`,
+			emitRaw:  true,
+			wantType: "GRANT_ESCALATION",
+			wantErr:  false,
+		},
+		{
+			name:     "GRANT WITH GRANT OPTION in pgAudit CSV",
+			line:     `2025-09-07 13:00:42.038 IST [8997] LOG:  AUDIT: SESSION,3,1,ROLE,GRANT,,,GRANT SELECT ON table TO user WITH GRANT OPTION;,<not logged>`,
+			emitRaw:  true,
+			wantType: "GRANT_ESCALATION",
+			wantErr:  false,
+		},
+
+		// PostgreSQL privilege escalation via REVOKE
+		{
+			name:     "REVOKE ROLE in pgAudit CSV",
+			line:     `2025-09-07 13:00:42.042 IST [8997] LOG:  AUDIT: SESSION,4,1,ROLE,REVOKE,,,REVOKE ROLE admin FROM user1;,<not logged>`,
+			emitRaw:  true,
+			wantType: "REVOKE_ESCALATION",
+			wantErr:  false,
+		},
+
+		// PostgreSQL privilege escalation via ALTER ROLE
+		{
+			name:     "ALTER ROLE WITH SUPER in pgAudit CSV",
+			line:     `2025-09-07 13:00:42.038 IST [8997] LOG:  AUDIT: SESSION,3,1,ROLE,ALTER ROLE,,,ALTER ROLE admin WITH SUPER;,<not logged>`,
+			emitRaw:  true,
+			wantType: "ALTER_ROLE_ESCALATION",
+			wantErr:  false,
+		},
+		{
+			name:     "ALTER ROLE WITH CREATEDB in pgAudit CSV",
+			line:     `2025-09-07 13:00:42.038 IST [8997] LOG:  AUDIT: SESSION,3,1,ROLE,ALTER ROLE,,,ALTER ROLE admin WITH CREATEDB;,<not logged>`,
+			emitRaw:  true,
+			wantType: "ALTER_ROLE_ESCALATION",
+			wantErr:  false,
+		},
+		{
+			name:     "ALTER ROLE WITH CREATEROLE in pgAudit CSV",
+			line:     `2025-09-07 13:00:42.038 IST [8997] LOG:  AUDIT: SESSION,3,1,ROLE,ALTER ROLE,,,ALTER ROLE admin WITH CREATEROLE;,<not logged>`,
+			emitRaw:  true,
+			wantType: "ALTER_ROLE_ESCALATION",
+			wantErr:  false,
+		},
+
+		// Non-escalation privilege commands (should remain normal types)
+		{
+			name:     "GRANT without escalation in pgAudit CSV",
+			line:     `2025-09-07 13:00:42.038 IST [8997] LOG:  AUDIT: SESSION,3,1,ROLE,GRANT,,,GRANT SELECT ON table TO user;,<not logged>`,
+			emitRaw:  true,
+			wantType: "GRANT",
+			wantErr:  false,
+		},
+		{
+			name:     "REVOKE without escalation in pgAudit CSV",
+			line:     `2025-09-07 13:00:42.038 IST [8997] LOG:  AUDIT: SESSION,3,1,ROLE,REVOKE,,,REVOKE SELECT ON table FROM user;,<not logged>`,
+			emitRaw:  true,
+			wantType: "REVOKE",
+			wantErr:  false,
+		},
+		{
+			name:     "ALTER ROLE without escalation in pgAudit CSV",
+			line:     `2025-09-07 13:00:42.038 IST [8997] LOG:  AUDIT: SESSION,3,1,ROLE,ALTER ROLE,,,ALTER ROLE user1 PASSWORD 'secret';,<not logged>`,
+			emitRaw:  true,
+			wantType: "ALTER",
+			wantErr:  false,
+		},
+	}
+
+	parser := NewPostgresParser(ParserOptions{EmitRaw: true})
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evt, err := parser.ParseLine(context.Background(), tt.line)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if evt == nil {
+				t.Fatal("ParseLine returned nil event")
+			}
+			if evt.QueryType != tt.wantType {
+				t.Errorf("got QueryType=%s, want %s", evt.QueryType, tt.wantType)
+			}
+			if tt.emitRaw && evt.RawQuery == nil {
+				t.Errorf("expected RawQuery to be set when EmitRaw is true")
+			}
+		})
+	}
+}

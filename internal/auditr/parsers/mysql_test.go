@@ -435,3 +435,89 @@ func TestMySQLParser_SQLClassification_Table(t *testing.T) {
 		})
 	}
 }
+
+func TestMySQLParser_PrivilegeEscalation(t *testing.T) {
+	cases := []struct {
+		name     string
+		format   string // "json" or "xml"
+		cmdClass string // command_class
+		sql      string
+		wantType string
+	}{
+		// Privilege escalation via GRANT
+		{"GRANT ALL PRIVILEGES (JSON)", "json", "grant", "GRANT ALL PRIVILEGES ON *.* TO admin;", "GRANT_ESCALATION"},
+		{"GRANT WITH GRANT OPTION (JSON)", "json", "grant", "GRANT SELECT ON table TO user WITH GRANT OPTION;", "GRANT_ESCALATION"},
+		{"GRANT ALL PRIVILEGES (XML)", "xml", "grant", "GRANT ALL PRIVILEGES ON *.* TO admin;", "GRANT_ESCALATION"},
+
+		// Privilege escalation via ALTER USER
+		{"ALTER USER WITH SUPER (JSON)", "json", "alter", "ALTER USER root WITH SUPER;", "ALTER_USER_ESCALATION"},
+		{"ALTER USER WITH ALL PRIVILEGES (JSON)", "json", "alter", "ALTER USER root WITH ALL PRIVILEGES;", "ALTER_USER_ESCALATION"},
+		{"ALTER USER WITH GRANT OPTION (JSON)", "json", "alter", "ALTER USER admin WITH GRANT OPTION;", "ALTER_USER_ESCALATION"},
+		{"ALTER USER WITH SUPER (XML)", "xml", "alter", "ALTER USER root WITH SUPER;", "ALTER_USER_ESCALATION"},
+
+		// Privilege escalation via CREATE USER
+		{"CREATE USER WITH SUPER (JSON)", "json", "create", "CREATE USER admin WITH SUPER;", "CREATE_USER_ESCALATION"},
+		{"CREATE USER WITH GRANT OPTION (JSON)", "json", "create", "CREATE USER admin WITH GRANT OPTION;", "CREATE_USER_ESCALATION"},
+		{"CREATE USER WITH SUPER (XML)", "xml", "create", "CREATE USER admin WITH SUPER;", "CREATE_USER_ESCALATION"},
+
+		// Non-escalation privilege commands (should remain normal types)
+		{"GRANT without escalation (JSON)", "json", "grant", "GRANT SELECT ON table TO user;", "GRANT"},
+		{"REVOKE without escalation (JSON)", "json", "revoke", "REVOKE SELECT ON table FROM user;", "REVOKE"},
+		{"ALTER USER without escalation (JSON)", "json", "alter", "ALTER USER user1 PASSWORD 'secret';", "ALTER"},
+		{"CREATE USER without escalation (JSON)", "json", "create", "CREATE USER user1 IDENTIFIED BY 'pass';", "CREATE"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := NewMySQLParser(ParserOptions{EmitRaw: true})
+			var line string
+
+			switch c.format {
+			case "json":
+				line = fmt.Sprintf(`{"audit_record":{
+					"name":"Query",
+					"record":"500",
+					"timestamp":"2025-09-21T14:00:00Z",
+					"command_class":"%s",
+					"connection_id":"123",
+					"status":0,
+					"sqltext":"%s",
+					"user":"u[u] @ 127.0.0.1 []",
+					"host":"127.0.0.1",
+					"ip":"127.0.0.1",
+					"db":"clinic"
+				}}`, c.cmdClass, c.sql)
+			case "xml":
+				line = fmt.Sprintf(`<AUDIT_RECORD 
+					NAME="Query"
+					RECORD="501"
+					TIMESTAMP="2025-09-21T14:00:00Z"
+					COMMAND_CLASS="%s"
+					CONNECTION_ID="124"
+					STATUS="0"
+					SQLTEXT="%s"
+					USER="u[u] @ 127.0.0.1 []"
+					HOST="127.0.0.1"
+					IP="127.0.0.1"
+					DB="clinic"
+				/>`, c.cmdClass, c.sql)
+			}
+
+			evt, err := p.ParseLine(context.Background(), line)
+			if err != nil {
+				t.Fatalf("ParseLine error: %v", err)
+			}
+			if evt == nil {
+				t.Fatal("ParseLine returned nil event")
+			}
+
+			if evt.QueryType != c.wantType {
+				t.Errorf("QueryType = %q, want %q", evt.QueryType, c.wantType)
+			}
+
+			// DB and user
+			assertDBUser(t, evt.DBUser, ptrString("u"))
+			assertDBName(t, evt.DBName, ptrString("clinic"))
+		})
+	}
+}

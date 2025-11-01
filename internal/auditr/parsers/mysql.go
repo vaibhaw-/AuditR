@@ -231,14 +231,34 @@ func mapCommandClassToQueryType(cmdClass, sql, recName string, status *int) stri
 	case "delete":
 		return "DELETE"
 	case "create", "create_db", "create_table", "create_index":
+		// Check if this is CREATE USER with privilege escalation
+		if sql != "" && strings.HasPrefix(strings.ToUpper(sql), "CREATE USER") {
+			if isPrivilegeEscalation(strings.ToUpper(sql)) {
+				return "CREATE_USER_ESCALATION"
+			}
+		}
 		return "CREATE"
 	case "alter", "alter_table":
+		// Check if this is ALTER USER with privilege escalation
+		if sql != "" && strings.HasPrefix(strings.ToUpper(sql), "ALTER USER") {
+			if isPrivilegeEscalation(strings.ToUpper(sql)) {
+				return "ALTER_USER_ESCALATION"
+			}
+		}
 		return "ALTER"
 	case "drop", "drop_db", "drop_table":
 		return "DROP"
 	case "grant":
+		// Check for privilege escalation patterns in GRANT commands
+		if sql != "" && isPrivilegeEscalation(strings.ToUpper(sql)) {
+			return "GRANT_ESCALATION"
+		}
 		return "GRANT"
 	case "revoke":
+		// Check for privilege escalation patterns in REVOKE commands
+		if sql != "" && isPrivilegeEscalation(strings.ToUpper(sql)) {
+			return "REVOKE_ESCALATION"
+		}
 		return "REVOKE"
 	case "load_data":
 		return "LOAD_DATA"
